@@ -1,5 +1,6 @@
 
 # modify your working directory with the data file if necessary (using the setwd() command):
+# setwd("my-working-directory")
 
 # read data:
 load("data_train.RData")
