@@ -1,10 +1,19 @@
+rm(list=ls())
+library(tidyverse)
 
 # modify your working directory with the data file if necessary (using the setwd() command):
 # setwd("my-working-directory")
 
 # read data:
-load("data_train.RData")
+load("d1.RData")
+load("d2.RData")
+load("d3.RData")
 
+data_train_DF=rbind(d1,d2,d3)
+rm(d1,d2,d3)
+summary(data_train_DF)
+data_train_DF %>% filter(year==1999,month==3) %>% 
+  ggplot(aes(x=lon, y=lat, color=CNT))+geom_point()
 # show severity thresholds:
 u_ba # for BA
 u_cnt # for CNT
@@ -85,6 +94,7 @@ prediction_ba = matrix(nrow = 80000, ncol = length(u_ba))
 for(k in 1:length(u_ba)){
   # we here use prediction_cnt[,1] for the probability P(BA = 0).
   prediction_ba[,k] = prediction_cnt[,1] + (1-prediction_cnt[,1]) * pnorm(log(u_ba[k]), mean = pred_mean_logba, sd = sd_gauss)
+  #prediction_ba[,k] = pnorm(log(u_ba[k]), mean = pred_mean_logba, sd = sd_gauss)
 }
 # prediction_ba has to be submitted for the competition
 
