@@ -55,7 +55,7 @@ for(k in 1:length(u_cnt)){
 # explore the mean of estimated probabilities for each severity threshold:
 apply(prediction_cnt, 2, mean)
 
-
+#
 # BA (log-normal regression): ####
 # Procedure: we here fit the log-normal model only to positive values of BA, and then combine this with the count model above for the probability of BA=0.
 # remove rows with data to predict:
