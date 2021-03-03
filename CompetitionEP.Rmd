@@ -1,0 +1,67 @@
+---
+title: "Competition"
+subtitle: "GO Bayes!"
+author: "Eric"
+date: "3/3/2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, comment = NA)
+```
+
+# Data loading
+
+```{r librairies, cache = FALSE}
+rm(list=ls())
+library(tidyverse)
+load("d1.RData")
+load("d2.RData")
+load("d3.RData")
+
+data_train_DF=rbind(d1,d2,d3)
+rm(d1,d2,d3)
+summary(data_train_DF)
+```
+
+There are $3503$ sites that are measured during $7$ months during $23$ years, which makes $563983$ records.
+
+We first create a site variable by concatening Longitude and latitude
+```{r createsite}
+data_train_DF<-data_train_DF %>% 
+  unite(col = site, c("lon","lat"),remove = FALSE) %>% 
+  mutate(site=str_replace(site,pattern = "-",replacement = "L")) %>% 
+  mutate(site=str_replace(site,pattern = "_",replacement = "l"))
+
+```
+
+
+# Data formatting
+
+## Binning
+```{r}
+u_baprim=c(-1,u_ba)
+cut(0,u_baprim, labels=F)
+cut(60000,u_baprim, labels=F)
+```
+
+
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
