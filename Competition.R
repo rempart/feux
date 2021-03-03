@@ -14,6 +14,22 @@ rm(d1,d2,d3)
 summary(data_train_DF)
 data_train_DF %>% filter(year==1999,month==3) %>% 
   ggplot(aes(x=lon, y=lat, color=CNT))+geom_point()
+data_train_DF %>% group_by(lat,lon) %>% summarize(n=n()) %>% pull(n) %>% unique
+length(unique(data_train_DF$year))
+length(unique(data_train_DF$month))
+length(unique(data_train_DF$year))*length(unique(data_train_DF$month))
+data_train_DF %>% group_by(lat,lon) %>% summarize(n=n()) %>% dim()
+3503 *23*7 == 563983
+range(data_train_DF$BA,na.rm = T)
+range(u_ba)
+range(data_train_DF$CNT,na.rm = T)
+range(u_cnt)
+
+data_train_DF %>% transmute(lc=is.na(rowMeans(dplyr::select(.,starts_with("lc"))))) %>% 
+pull(lc) %>% sum()
+data_train_DF %>% transmute(clim=is.na(rowMeans(dplyr::select(.,starts_with("clim"))))) %>% 
+  pull(clim) %>% sum()
+
 # show severity thresholds:
 u_ba # for BA
 u_cnt # for CNT
