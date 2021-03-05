@@ -1,7 +1,7 @@
 ---
 title: "Challenge Feux de Forêts"
 author: "David Makowski & Eric Parent"
-date: "March 2021"
+date: "The 8th of March 2021"
 fontsize: 9pt
 output: 
   beamer_presentation:
