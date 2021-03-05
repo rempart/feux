@@ -33,6 +33,14 @@ data_train_DF<-data_train_DF %>%
   unite(col = site, c("lon","lat"),remove = FALSE) %>% 
   mutate(site=str_replace(site,pattern = "-",replacement = "L")) %>% 
   mutate(site=str_replace(site,pattern = "_",replacement = "l"))
+```
+
+And group by site to explore the data
+```{r}
+data_train_DF %>% group_by(site) %>% 
+  summarize(lat=mean(lat),lon=mean(lon),CNTmax=max(CNT, na.rm=T), CNTmean=mean(CNT, na.rm=T),
+            BAmax=max(BA, na.rm=T), BAmean=mean(BA, na.rm=T)) %>%
+  arrange(desc(CNTmean) ) %>%relocate(lat,lon, .after= BAmean) %>% tibble()
 
 ```
 
