@@ -93,12 +93,13 @@ fit_cvglmnet = cv.glmnet(X,Y,family="poisson", nfolds=3)
 par(mfrow=c(1,1))
 plot(fit_cvglmnet)
 save(fit_cvglmnet, file="fit_cvglmnet")
+load(file = "fit_cvglmnet")
 
 fit_cvglmnet$lambda.1se
 coef(fit_cvglmnet, s="lambda.1se")
 
 # calculate predictions:
-pred_mean_cnt_lasso = predict(fit_cvglmnet, newx=as.matrix(test_select_DF[,-1]), s="lambda.1se", type = "response")
+pred_mean_cnt_lasso = predict(fit_cvglmnet, newx=as.matrix(test_select_DF[,-1]), s="lambda.min", type = "response")
 
 #####Comparison of the two types of predictions
 plot(pred_mean_cnt_lasso, pred_mean_cnt_glm, xlab="LASSO", ylab="GLM")
@@ -109,7 +110,7 @@ summary(pred_mean_cnt_glm)
 #### calculate the matrix with estimated exceedance probability of the severity thresholds:
 prediction_cnt = matrix(nrow = nrow(test_select_DF), ncol = length(u_cnt))
 indicatrice_cnt=prediction_cnt
-pred_mean_cnt=pred_mean_cnt_glm
+pred_mean_cnt=pred_mean_cnt_lasso
 #pred_mean_cnt=pred_mean_cnt_lasso
 
 for(k in 1:length(u_cnt)){
