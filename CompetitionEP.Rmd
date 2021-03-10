@@ -175,7 +175,7 @@ d$IdNumber_right=d$IdNumber[d$IdLong+rep(delta_right, 161)]
 data_train_DF<- data_train_DF %>% left_join(d %>% dplyr::select(starts_with("IdNumber")))
 ```
 
-We can check
+One can check that the neighbors seem correctly identified...
 
 ```{r}
 sixselections <-sample(data_train_DF$IdNumber,6,rep=F)
@@ -201,6 +201,45 @@ data_train_DF %>% group_by(date,classe_BA) %>% summarise(BA=mean(BA,na.rm=T)) %>
   geom_line()+geom_smooth(se=0)+ theme(legend.position="none") +
   labs(title="Time evolution of Wildfires Burnt areas", x="Date")
 ```
+
+We now try to get the previous time record at a given site, as well as the next one.
+
+```{r}
+d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,month,year)
+d<-d %>% arrange(lon,lat,date) %>% rowid_to_column(var="IdTime") %>% 
+  mutate(IdTime=as.integer(IdTime))
+
+delta_next <-rep(c(rep(1,each=6),0),each=80569)
+d$IdNumber_next=d$IdNumber[d$IdTime+delta_next]  
+
+delta_previous <- rep(c(0,rep(-1,each=6)),each=80569)
+d$IdNumber_previous=d$IdNumber[d$IdTime+delta_previous]  
+
+data_train_DF<- data_train_DF %>% left_join(d %>% dplyr::select(starts_with("IdNumber")))
+
+l<-ls()
+rm(list=l[l!="data_train_DF"])
+
+```
+
+Let's build a cross table and a conditional probability
+
+```{r}
+d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,IdNumber_next, theta_CNT) %>% 
+  arrange(IdNumber) 
+d<-d %>% mutate(theta_CNT_next=d$theta_CNT[d$IdNumber_next]) %>% filter(IdNumber !=IdNumber_next)
+
+table(rep(1:3, each=3),c("C",rep(c("A","B","C"),3)[-1]))->Tab
+Tab
+apply(Tab,1,sum)
+Tab<- table(d$theta_CNT,d$theta_CNT_next)
+Ti<-apply(Tab,1,sum) #(theta_CNT i est une ligne)
+Ti<-matrix(Ti,28,28)
+theta_next_Sachant_theta=Tab/Ti
+
+```
+
+
 ## Normal quantile transform
 
 ```{r}
