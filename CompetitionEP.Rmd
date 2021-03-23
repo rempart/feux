@@ -90,6 +90,103 @@ d<-d %>% rename(mean_CNT=CNT, mean_BA=BA)
 data_train_DF<-data_train_DF %>% left_join(d)
 ```
 
+## Look for neighbors
+
+We create variables nbcolat and nbcolong that say how may sites can be found with the same latitude (or with the same longitude) at a given time.
+```{r}
+d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,theta_CNT,tetha_BA)
+d<-d %>% arrange(date,lon,lat)
+d %>% group_by(date,lon) %>% summarise(nbcolong=length(lat)) %>% 
+  ungroup() -> dcolong
+d %>% group_by(date,lat) %>% summarise(nbcolat=length(lon)) %>% 
+  ungroup() -> dcolat
+d<-d %>% left_join(dcolat) %>% left_join(dcolong)
+```
+
+We first arrange by date and longitude followed by latitude. There is 7 months $\times$23 years$\times$ 117 = 18837 blocs of different latitudes. In this setting, one goes from left to right (following increasing longitudes) and then from bottom to top (following increasing latitudes). The regular structure of the lattice allows for a quick evaluation of the closest neighbors belonging to the same longitude.
+```{r}
+d<-d %>% arrange(date,lon,lat)%>% rowid_to_column(var="IdLat") 
+nsites <- 3503
+delta_up<- delta_bottom <- rep(0,nsites)
+e=1
+repeat {
+colong=d$nbcolong[e]
+delta_bottom[e]=0
+delta_up[e+colong-1]= 0
+if(colong!=1){
+delta_bottom[(e+1):(e+colong-1)]=-1
+delta_up[(e):(e+colong-2)]= 1
+}
+e=e+colong
+if (e >=(nsites+1)){
+break
+}
+}
+d$IdNumber_down=d$IdNumber[d$IdLat+rep(delta_bottom, 161)]  
+d$IdNumber_up=d$IdNumber[d$IdLat+rep(delta_up, 161)] 
+
+# a bad computational idea is as follows
+# E <- length(d$lat)
+# right_neigbor<-rep(NA,E)
+# left_neigbor<-rep(NA,E)
+# up_neigbor<-rep(NA,E)
+# down_neigbor<-rep(NA,E)
+# for(e in 1:E) {
+#   lat<-d$lat[e]
+#   long<-d$lon[e]
+#   dat=d$date[e]
+#   e_right<-which((d$date==dat)&(d$lat==lat)&(d$long==long+0.5))
+#   e_left<-which((d$date==dat)&(d$lat==lat)&(d$long==long-0.5))
+#   e_up<-which((d$date==dat)&(d$lat==lat+0.5)&(d$long==long))
+#   e_down<-which((d$date==dat)&(d$lat==lat-0.5)&(d$long==long))
+#   
+#   right_neigbor[e]=ifelse(length(e_right)!=0,e_right,NA )
+#   left_neigbor[e]= ifelse(length(e_left)!=0,e_left,NA )
+#    up_neigbor[e]= ifelse(length(e_up)!=0,e_up,NA )
+#     down_neigbor[e]=ifelse(length(e_down)!=0,e_down,NA )
+#     
+# 
+# }
+```
+
+We can work the same with neighbors belonging to the same latitude
+```{r}
+d<-d %>% arrange(date,lat,lon)%>% rowid_to_column(var="IdLong") 
+nsites <- 3503
+delta_left<- delta_right <- rep(0,nsites)
+e=1
+repeat {
+colat=d$nbcolat[e]
+delta_left[e]=0
+delta_right[e+colong-1]= 0
+if(colat!=1){
+delta_left[(e+1):(e+colat-1)]=-1
+delta_right[(e):(e+colat-2)]= 1
+}
+e=e+colat
+if (e >=(nsites+1)){
+break
+}
+}
+d$IdNumber_left=d$IdNumber[d$IdLong+rep(delta_left, 161)]  
+d$IdNumber_right=d$IdNumber[d$IdLong+rep(delta_right, 161)] 
+
+
+data_train_DF<- data_train_DF %>% left_join(d %>% dplyr::select(starts_with("IdNumber")))
+```
+
+One can check that the neighbors seem correctly identified...
+
+```{r}
+sixselections <-sample(data_train_DF$IdNumber,6,rep=F)
+ens=NULL
+for(s in sixselections){ens=c(ens,data_train_DF %>% filter(IdNumber==s) %>% dplyr::select(starts_with("IdNum")) %>% as.vector() ) }
+d<-data_frame(IdNumber=as.numeric(ens),coul=rep(1:6,each=5)) %>% left_join(data_train_DF %>% dplyr::select(IdNumber,lat,lon))
+data_train_DF %>%  ggplot(aes(x=lon, y=lat))+
+  geom_tile(color="black", fill="white")+geom_tile(data=d,fill=as.factor(d$coul))
+```
+
+
 ## Time evolution
 
 ```{r}
@@ -97,6 +194,51 @@ data_train_DF %>% group_by(date,classe_CNT) %>% summarise(CNT=mean(CNT,na.rm=T))
   geom_line()+geom_smooth(se=0)+ theme(legend.position="none") +
   labs(title="Time evolution of Wildfires Counts", x="Date")
 ```
+
+
+```{r}
+data_train_DF %>% group_by(date,classe_BA) %>% summarise(BA=mean(BA,na.rm=T)) %>%  ggplot(aes(x=date,y=log(BA+1), color=as.factor(classe_BA) ))+
+  geom_line()+geom_smooth(se=0)+ theme(legend.position="none") +
+  labs(title="Time evolution of Wildfires Burnt areas", x="Date")
+```
+
+We now try to get the previous time record at a given site, as well as the next one.
+
+```{r}
+d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,month,year)
+d<-d %>% arrange(lon,lat,date) %>% rowid_to_column(var="IdTime") %>% 
+  mutate(IdTime=as.integer(IdTime))
+
+delta_next <-rep(c(rep(1,each=6),0),each=80569)
+d$IdNumber_next=d$IdNumber[d$IdTime+delta_next]  
+
+delta_previous <- rep(c(0,rep(-1,each=6)),each=80569)
+d$IdNumber_previous=d$IdNumber[d$IdTime+delta_previous]  
+
+data_train_DF<- data_train_DF %>% left_join(d %>% dplyr::select(starts_with("IdNumber")))
+
+l<-ls()
+rm(list=l[l!="data_train_DF"])
+
+```
+
+Let's build a cross table and a conditional probability
+
+```{r}
+d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,IdNumber_next, theta_CNT) %>% 
+  arrange(IdNumber) 
+d<-d %>% mutate(theta_CNT_next=d$theta_CNT[d$IdNumber_next]) %>% filter(IdNumber !=IdNumber_next)
+
+table(rep(1:3, each=3),c("C",rep(c("A","B","C"),3)[-1]))->Tab
+Tab
+apply(Tab,1,sum)
+Tab<- table(d$theta_CNT,d$theta_CNT_next)
+Ti<-apply(Tab,1,sum) #(theta_CNT i est une ligne)
+Ti<-matrix(Ti,28,28)
+theta_next_Sachant_theta=Tab/Ti
+
+```
+
 
 ## Normal quantile transform
 

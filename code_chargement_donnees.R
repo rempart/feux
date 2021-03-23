@@ -17,4 +17,5 @@ data_train_DF<-data_train_DF %>%
   unite(col = site, c("lon","lat"),remove = FALSE) %>% 
   mutate(site=str_replace(site,pattern = "-",replacement = "Lon")) %>% 
   mutate(site=str_replace(site,pattern = "_",replacement = "lat")) %>% 
-  mutate(date=lubridate::make_datetime(year=year, month=month))
+  mutate(date=lubridate::make_datetime(year=year, month=month)) %>% 
+  rownames_to_column(var="IdNumber") %>% mutate(IdNumber=as.integer(IdNumber))
