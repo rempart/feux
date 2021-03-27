@@ -1,8 +1,8 @@
 ---
-title: "Competition"
+title: "Wildfires Competition"
 subtitle: "GO Bayes!"
 author: "Eric"
-date: "3/3/2021"
+date: "26/3/2021"
 output: html_document
 ---
 
@@ -86,11 +86,94 @@ d %>%  ggplot(aes(x=lon, y=lat))+
 Adding the classes for BA and CNT to the main file
 
 ```{r}
-d<-d %>% rename(mean_CNT=CNT, mean_BA=BA)
+d<-d %>% rename(mean_CNT=CNT, mean_BA=BA,
+                classe_meanCNT=classe_CNT,
+                classe_meanBA=classe_BA)
 data_train_DF<-data_train_DF %>% left_join(d)
+rm(d)
+```
+# Bayesian updating
+
+Let's call $\theta$ the unknown, $[\theta]$ its probabilitic distribution.
+Consider the data $(A,B)$. Via Bayes'rule one gets
+$$[\theta|A,B]=\frac{[\theta,A,B]}{[A,B]}=\frac{[A,B|\theta]\times [\theta]}{[A,B]}\\
+[\theta|A,B]=\frac{[A|\theta,B]\times[B|\theta]\times [\theta]}{[A,B]}$$
+Focusing on these quantities as a function of the target $\theta$, we see that:
+$$[{\theta}|A,B] \propto [A|\theta,B]\times[B|\theta]\times [\theta]$$
+In the challenge, $\theta$ is a categorical variable refering eiter to the count class of wildfire (ranging from $1$ to $28$) in a given pixel at a certain time, or the corresponding burnt area or both. The available information $A$ stems from many various sources:
+ - the neigbours because of the spatial coherence,
+ - the previous category of the pixel (or its neighbours), as well as its next state due to some expected temporal behavior.
+ - the 10 meteorological variables.
+ - the proportions of the 18 land cover classes in the grid cell.
+ When the information $A$ and the unknown $\theta$ are both categorical as in the first two cases, $A|\theta$ is a cross-table that can be empirically computed from the raw data table.
+ When the information $A$ is continuous and the unknown $\theta$ fixed at a certain category, $A|\theta$ empirically correspond to a matrix of observations that could be modeled as a multivariate Gaussian realisation after suitable transformations.
+ 
+ Assuming $[A,B|\theta]=[A|\theta]\times [B|\theta]$ i.e. that, given $\theta$, the pieces of information $A$ and $B$ are conditionnally independent would allow for sequential updating:
+$$[{\theta}|A,B] \propto
+[A|\theta]\times[B|\theta]\times [\theta]$$
+ 
+ 
+## Priors by class of mean numbers of fires
+
+We initialize probability distribution by grouping through classes of fires
+
+```{r}
+d <- data_train_DF %>% dplyr::select(IdNumber,classe_meanCNT,theta_CNT) %>% 
+  arrange(IdNumber) 
+truc= tibble(IdNumber=rep(0,11*28),classe_meanCNT=rep(1:11,28),theta_CNT=rep(1:28 ,each=11))
+d_nest<- rbind(d,truc) %>% filter(!is.na(theta_CNT)) %>% group_by(classe_meanCNT) %>% nest
+d_nest %>% arrange(classe_meanCNT) %>%  mutate(
+      out= purrr::map(data,~{(table(.x$theta_CNT))}),
+      p1=purrr::map_int(out,1),
+      p2=purrr::map_int(out,2), 
+      p3=purrr::map_int(out,3),
+      p4=purrr::map_int(out,4),
+      p5=purrr::map_int(out,5), 
+      p6=purrr::map_int(out,6),
+      p7=purrr::map_int(out,7),
+      p8=purrr::map_int(out,8), 
+      p9=purrr::map_int(out,9),
+      p10=purrr::map_int(out,10),
+      p11=purrr::map_int(out,11),
+      p12=purrr::map_int(out,12), 
+      p13=purrr::map_int(out,13),
+      p14=purrr::map_int(out,14),
+      p15=purrr::map_int(out,15), 
+      p16=purrr::map_int(out,16),
+      p17=purrr::map_int(out,17),
+      p18=purrr::map_int(out,18), 
+      p19=purrr::map_int(out,19),
+      p20=purrr::map_int(out,20),
+      p21=purrr::map_int(out,21),
+      p22=purrr::map_int(out,22), 
+      p23=purrr::map_int(out,23),
+      p24=purrr::map_int(out,24),
+      p25=purrr::map_int(out,25), 
+      p26=purrr::map_int(out,26),
+      p27=purrr::map_int(out,27),
+      p28=purrr::map_int(out,28)) %>% 
+      dplyr::select(-out,-data) -> dd
+dd<-dd %>% ungroup() %>%  
+  mutate(somme = apply(dplyr::select(.,starts_with("p")),1,sum)) %>% 
+  group_by(classe_meanCNT) 
+
+
+dd<- tibble(classe_meanCNT=dd$classe_meanCNT,dd[, 2:(2+27)]/dd$somme)
+
+Proba<-data_train_DF %>% dplyr::select(IdNumber,classe_meanCNT,theta_CNT) %>% 
+  arrange(IdNumber) %>% left_join(dd) %>% dplyr::select(-classe_meanCNT)
+    
 ```
 
-## Look for neighbors
+The tibble *Proba* now contains a prior distribution for CNT state to start with.
+
+Some cleaning...
+```{r}
+l<-ls()
+rm(list=l[!l%in% c("data_train_DF", "Proba")])
+```
+
+## Looking for spatial neighbors
 
 We create variables nbcolat and nbcolong that say how may sites can be found with the same latitude (or with the same longitude) at a given time.
 ```{r}
@@ -103,7 +186,7 @@ d %>% group_by(date,lat) %>% summarise(nbcolat=length(lon)) %>%
 d<-d %>% left_join(dcolat) %>% left_join(dcolong)
 ```
 
-We first arrange by date and longitude followed by latitude. There is 7 months $\times$23 years$\times$ 117 = 18837 blocs of different latitudes. In this setting, one goes from left to right (following increasing longitudes) and then from bottom to top (following increasing latitudes). The regular structure of the lattice allows for a quick evaluation of the closest neighbors belonging to the same longitude.
+We first arrange by date and longitude followed by latitude. There is 7 months $\times$ 23 years $\times$ 117 = 18837 blocs of different latitudes. In this setting, one goes from left to right (following increasing longitudes) and then from bottom to top (following increasing latitudes). The regular structure of the lattice allows for a quick evaluation of the closest neighbors belonging to the same longitude.
 ```{r}
 d<-d %>% arrange(date,lon,lat)%>% rowid_to_column(var="IdLat") 
 nsites <- 3503
@@ -149,7 +232,7 @@ d$IdNumber_up=d$IdNumber[d$IdLat+rep(delta_up, 161)]
 # }
 ```
 
-We can work the same with neighbors belonging to the same latitude
+We can work the same way with neighbors belonging to the same latitude
 ```{r}
 d<-d %>% arrange(date,lat,lon)%>% rowid_to_column(var="IdLong") 
 nsites <- 3503
@@ -186,18 +269,55 @@ data_train_DF %>%  ggplot(aes(x=lon, y=lat))+
   geom_tile(color="black", fill="white")+geom_tile(data=d,fill=as.factor(d$coul))
 ```
 
-
-## Time evolution
+We now update the probability of the CNT states with neighbors
 
 ```{r}
-data_train_DF %>% group_by(date,classe_CNT) %>% summarise(CNT=mean(CNT,na.rm=T)) %>%  ggplot(aes(x=date,y=log(CNT+1), color=as.factor(classe_CNT) ))+
+d <- data_train_DF %>% dplyr::select(IdNumber,IdNumber_left, theta_CNT) %>% 
+  arrange(IdNumber) 
+d<-d %>% mutate(theta_CNT_left=d$theta_CNT[d$IdNumber_left]) %>% filter(IdNumber !=IdNumber_left) %>% na.omit()
+#table(rep(c("theta1","theta2","theta3"), each=3),c("C",rep(c("A","B","C"),3)[-1]))->Tab
+#Tab
+#apply(Tab,1,sum)
+#Tab/apply(Tab,1,sum)
+#t(Tab/apply(Tab,1,sum))
+Tab<- table(d$theta_CNT,d$theta_CNT_left)
+Ti<-apply(Tab,1,sum) #(theta_CNT en ligne, theta_CNT_left en colonne)
+theta_left_Sachant_theta=Tab/matrix(Ti,nrow = 28,ncol=28) 
+theta_left_Sachant_theta_col=t(theta_left_Sachant_theta)
+##
+d <- data_train_DF %>% dplyr::select(IdNumber,IdNumber_left, theta_CNT) %>% 
+  arrange(IdNumber) %>% mutate(theta_CNT_left=theta_CNT[IdNumber_left]) %>% left_join(Proba)
+dquireste<-d %>% filter(!is.na(theta_CNT_left)) %>% filter(!(IdNumber_left==IdNumber)) %>% arrange(theta_CNT_left)
+dinvariable <- d %>% filter(is.na(theta_CNT_left) | (IdNumber_left==IdNumber)) %>% arrange(IdNumber)
+dquireste %>% group_by(theta_CNT_left) %>% summarize(n=n()) %>% pull(n)->n
+#mise a jour bayesienne
+M=matrix(theta_left_Sachant_theta_col[1,1:28],nrow=n[1],ncol=28,byrow=T)
+for (s in 2:28){M= rbind(M, matrix(theta_left_Sachant_theta_col[s,1:28],nrow=n[s],ncol=28,byrow=T))
+               }
+Prob=M*(dquireste %>% dplyr::select(starts_with("p")))
+#renormalisation
+Prob =Prob/ apply(Prob,1,sum)
+#reconstruction
+dquireste<- bind_cols(dquireste %>% dplyr::select(-starts_with("p")),Prob)
+dout<-bind_rows(dquireste,dinvariable) %>% arrange(IdNumber)
+Proba<- dout %>% dplyr::select(IdNumber, theta_CNT, starts_with("p"))
+#cleaning
+l<-ls()
+rm(list=l[!l%in% c("data_train_DF", "Proba")])
+```
+
+
+## Looking for temporal neighbors
+
+```{r}
+data_train_DF %>% group_by(date,classe_meanCNT) %>% summarise(CNT=mean(CNT,na.rm=T)) %>%  ggplot(aes(x=date,y=log(CNT+1), color=as.factor(classe_meanCNT) ))+
   geom_line()+geom_smooth(se=0)+ theme(legend.position="none") +
   labs(title="Time evolution of Wildfires Counts", x="Date")
 ```
 
 
 ```{r}
-data_train_DF %>% group_by(date,classe_BA) %>% summarise(BA=mean(BA,na.rm=T)) %>%  ggplot(aes(x=date,y=log(BA+1), color=as.factor(classe_BA) ))+
+data_train_DF %>% group_by(date,classe_meanBA) %>% summarise(BA=mean(BA,na.rm=T)) %>%  ggplot(aes(x=date,y=log(BA+1), color=as.factor(classe_meanBA) ))+
   geom_line()+geom_smooth(se=0)+ theme(legend.position="none") +
   labs(title="Time evolution of Wildfires Burnt areas", x="Date")
 ```
@@ -229,13 +349,14 @@ d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,IdNumber_next, t
   arrange(IdNumber) 
 d<-d %>% mutate(theta_CNT_next=d$theta_CNT[d$IdNumber_next]) %>% filter(IdNumber !=IdNumber_next)
 
-table(rep(1:3, each=3),c("C",rep(c("A","B","C"),3)[-1]))->Tab
+table(rep(c("theta1","theta2","theta3"), each=3),c("C",rep(c("A","B","C"),3)[-1]))->Tab
 Tab
 apply(Tab,1,sum)
+Tab/apply(Tab,1,sum)
+t(Tab/apply(Tab,1,sum))
 Tab<- table(d$theta_CNT,d$theta_CNT_next)
-Ti<-apply(Tab,1,sum) #(theta_CNT i est une ligne)
-Ti<-matrix(Ti,28,28)
-theta_next_Sachant_theta=Tab/Ti
+Ti<-apply(Tab,1,sum) #(theta_CNT en ligne, theta_CNT_next en colonne)
+theta_next_Sachant_theta=Tab/matrix(Ti,nrow = 28,ncol=28) (se lit en colonne )
 
 ```
 
@@ -247,6 +368,6 @@ order(c(1,NA,3,3,2))
 
 
 ```
-
+,,,,,,
 
 
