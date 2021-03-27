@@ -239,9 +239,9 @@ summary(apply(pred_cnt_ranger_cat_w$predictions,1, sum))
 
 SCNT_cont=function(Obs, Pred, Name, u_cnt) {
 
-plot(Pred, Obs, xlab="Predictions", ylab="Observations")
-abline(0,1)
-title(Name)
+#plot(Pred, Obs, xlab="Predictions", ylab="Observations")
+#abline(0,1)
+#title(Name)
 
 RMSE=sqrt(mean((Obs-Pred)^2))
 
