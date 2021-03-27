@@ -269,41 +269,106 @@ data_train_DF %>%  ggplot(aes(x=lon, y=lat))+
   geom_tile(color="black", fill="white")+geom_tile(data=d,fill=as.factor(d$coul))
 ```
 
-We now update the probability of the CNT states with neighbors
+First we write a function to update when the information is discrete.
+```{r CalculProbaDiscrete}
+
+CalculProbaDiscrete=function(d){
+  # Calcul de la loi conditionnele [A|theta]
+  dd<-d %>% filter(IdNumber !=IdNumber_A) %>% na.omit() %>% arrange(theta,A)
+  Tab<- table(dd$theta,dd$A)
+  A_Sachant_theta=t(Tab/matrix(apply(Tab,1,sum),nrow = 28,ncol=28) )  #(A en ligne, theta en colonne)
+  ## Découpage en deux sous-tableaux
+dquireste<-d %>% filter(!is.na(A)) %>% filter(!(IdNumber_A==IdNumber)) %>% arrange(A)
+dinvariable <- d %>% filter(is.na(A) | (IdNumber_A==IdNumber)) %>% arrange(IdNumber)
+dquireste %>% group_by(A) %>% summarize(n=n()) %>% pull(n)->n
+##mise a jour bayesienne
+M=matrix(A_Sachant_theta[1,1:28],nrow=n[1],ncol=28,byrow=T)
+for (s in 2:28){M= rbind(M, matrix(A_Sachant_theta[s,1:28],nrow=n[s],ncol=28,byrow=T))
+               }
+M=M*(dquireste %>% dplyr::select(starts_with("p")))
+#renormalisation
+M=M/apply(M,1,sum)
+dquireste<- bind_cols(dquireste %>% dplyr::select(-starts_with("p")),M)
+dout<-bind_rows(dquireste,dinvariable) %>% arrange(IdNumber)
+Proba<- dout %>% dplyr::select(IdNumber, theta, starts_with("p"))
+}
+
+```
+
+We now update the probability of the CNT states with neighbors located at the left
 
 ```{r}
-d <- data_train_DF %>% dplyr::select(IdNumber,IdNumber_left, theta_CNT) %>% 
-  arrange(IdNumber) 
-d<-d %>% mutate(theta_CNT_left=d$theta_CNT[d$IdNumber_left]) %>% filter(IdNumber !=IdNumber_left) %>% na.omit()
-#table(rep(c("theta1","theta2","theta3"), each=3),c("C",rep(c("A","B","C"),3)[-1]))->Tab
-#Tab
-#apply(Tab,1,sum)
-#Tab/apply(Tab,1,sum)
-#t(Tab/apply(Tab,1,sum))
-Tab<- table(d$theta_CNT,d$theta_CNT_left)
-Ti<-apply(Tab,1,sum) #(theta_CNT en ligne, theta_CNT_left en colonne)
-theta_left_Sachant_theta=Tab/matrix(Ti,nrow = 28,ncol=28) 
-theta_left_Sachant_theta_col=t(theta_left_Sachant_theta)
-##
-d <- data_train_DF %>% dplyr::select(IdNumber,IdNumber_left, theta_CNT) %>% 
-  arrange(IdNumber) %>% mutate(theta_CNT_left=theta_CNT[IdNumber_left]) %>% left_join(Proba)
-dquireste<-d %>% filter(!is.na(theta_CNT_left)) %>% filter(!(IdNumber_left==IdNumber)) %>% arrange(theta_CNT_left)
-dinvariable <- d %>% filter(is.na(theta_CNT_left) | (IdNumber_left==IdNumber)) %>% arrange(IdNumber)
-dquireste %>% group_by(theta_CNT_left) %>% summarize(n=n()) %>% pull(n)->n
-#mise a jour bayesienne
-M=matrix(theta_left_Sachant_theta_col[1,1:28],nrow=n[1],ncol=28,byrow=T)
-for (s in 2:28){M= rbind(M, matrix(theta_left_Sachant_theta_col[s,1:28],nrow=n[s],ncol=28,byrow=T))
-               }
-Prob=M*(dquireste %>% dplyr::select(starts_with("p")))
-#renormalisation
-Prob =Prob/ apply(Prob,1,sum)
-#reconstruction
-dquireste<- bind_cols(dquireste %>% dplyr::select(-starts_with("p")),Prob)
-dout<-bind_rows(dquireste,dinvariable) %>% arrange(IdNumber)
-Proba<- dout %>% dplyr::select(IdNumber, theta_CNT, starts_with("p"))
+d <- data_train_DF %>% left_join(Proba) %>% arrange(IdNumber) %>%
+  rename(IdNumber_A=IdNumber_left) %>% 
+  rename(theta=theta_CNT) %>% 
+  mutate(A=theta[IdNumber_A]) %>% 
+  dplyr::select(IdNumber,IdNumber_A, theta,A, starts_with("p")) 
+
+Proba=CalculProbaDiscrete(d)
+
+Proba <-Proba %>% rename(theta_CNT=theta)
+
 #cleaning
 l<-ls()
-rm(list=l[!l%in% c("data_train_DF", "Proba")])
+rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
+#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+```
+
+We now update the probability of the CNT states with neighbors located at the right
+
+```{r}
+d <- data_train_DF %>% left_join(Proba) %>% arrange(IdNumber) %>%
+  rename(IdNumber_A=IdNumber_right) %>% 
+  rename(theta=theta_CNT) %>% 
+  mutate(A=theta[IdNumber_A]) %>% 
+  dplyr::select(IdNumber,IdNumber_A, theta,A, starts_with("p")) 
+
+Proba=CalculProbaDiscrete(d)
+
+Proba <-Proba %>% rename(theta_CNT=theta)
+
+#cleaning
+l<-ls()
+rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
+#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+```
+
+With neighbors located North
+
+```{r}
+d <- data_train_DF %>% left_join(Proba) %>% arrange(IdNumber) %>%
+  rename(IdNumber_A=IdNumber_up) %>% 
+  rename(theta=theta_CNT) %>% 
+  mutate(A=theta[IdNumber_A]) %>% 
+  dplyr::select(IdNumber,IdNumber_A, theta,A, starts_with("p")) 
+
+Proba=CalculProbaDiscrete(d)
+
+Proba <-Proba %>% rename(theta_CNT=theta)
+
+#cleaning
+l<-ls()
+rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
+#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+```
+
+With neighbors located South
+
+```{r}
+d <- data_train_DF %>% left_join(Proba) %>% arrange(IdNumber) %>%
+  rename(IdNumber_A=IdNumber_down) %>% 
+  rename(theta=theta_CNT) %>% 
+  mutate(A=theta[IdNumber_A]) %>% 
+  dplyr::select(IdNumber,IdNumber_A, theta,A, starts_with("p")) 
+
+Proba=CalculProbaDiscrete(d)
+
+Proba <-Proba %>% rename(theta_CNT=theta)
+
+#cleaning
+l<-ls()
+rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
+#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
 ```
 
 
