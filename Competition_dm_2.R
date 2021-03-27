@@ -102,7 +102,7 @@ test_select_Cat_CNT<-Cat_CNT[c(SelNum)]
 fit1 = glm(CNT ~ ., data = train_select_DF, family = poisson(link = "log"))
 summary(fit1)
 save(fit1, file="fit1")
-load(fit1)
+load("fit1")
 # calculate predictions:
 pred_mean_cnt_glm = predict(fit1, test_select_DF, type = "response")
 plot(pred_mean_cnt_glm,test_select_DF$CNT, xlab="Predictions", ylab="observations")
@@ -124,6 +124,7 @@ plot(pred_mean_cnt_lasso,test_select_DF$CNT, xlab="Predictions", ylab="observati
 abline(0,1)
 
 ####Model 3: ranger
+library(ranger)
 fit_ranger_permut=ranger(CNT~., data=train_select_DF,importance='permutation')
 save(fit_ranger_permut, file="fit_ranger_permut")
 load(file="fit_ranger_permut")
