@@ -237,7 +237,7 @@ summary(apply(pred_cnt_ranger_cat_w$predictions,1, sum))
 
 #######Function SCNT for continuous outputs
 
-SCNT_cont=function(Obs, Pred, Name) {
+SCNT_cont=function(Obs, Pred, Name, u_cnt) {
 
 plot(Pred, Obs, xlab="Predictions", ylab="Observations")
 abline(0,1)
@@ -246,7 +246,7 @@ title(Name)
 RMSE=sqrt(mean((Obs-Pred)^2))
 
 # calculate the matrix with estimated exceedance probability of the severity thresholds:
-prediction_cnt = matrix(nrow = nrow(test_select_DF), ncol = length(u_cnt))
+prediction_cnt = matrix(nrow = length(Pred), ncol = length(u_cnt))
 indicatrice_cnt=prediction_cnt
 pred_mean_cnt=Pred
 
@@ -266,12 +266,11 @@ return(c(RMSE, Scnt))}
 
 #######Function SCNT for categorical outputs
 
-SCNT_cat=function(Obs, Pred) {
+SCNT_cat=function(Obs, Pred,u_cnt) {
   
   # calculate the matrix with estimated exceedance probability of the severity thresholds:
-  prediction_cnt = matrix(nrow = nrow(test_select_DF), ncol = length(u_cnt))
-  indicatrice_cnt=prediction_cnt
-  Proba_cum=t(apply(pred_cnt_ranger_cat$predictions,1, cumsum))
+  indicatrice_cnt=Pred
+  Proba_cum=t(apply(Pred,1, cumsum))
   prediction_cnt=Proba_cum
   
   for(k in 1:length(u_cnt)){
@@ -310,24 +309,31 @@ par(mfrow=c(2,3))
 for (m in 1:6) {
 Pred=unlist(Pred_list[m])
 Obs=test_select_DF$CNT
-Res=SCNT_cont(Obs, Pred, Names[m])
+Res=SCNT_cont(Obs, Pred, Names[m],u_cnt)
 RMSE_all=c(RMSE_all,Res[1])
 SCNT_all=c(SCNT_all,Res[2])
 }
 
 for (m in 1:2) {
-Pred=unlist(Proba_list[m])
+Pred=Proba_list[[m]]
 Obs=test_select_DF$CNT
-Resc=SCNT_cat(Obs, Pred)
+Resc=SCNT_cat(Obs, Pred,u_cnt)
 RMSE_all=c(RMSE_all, NA)
 SCNT_all=c(SCNT_all,Resc)
 }
 
-ResultTAB=as.data.frame(cbind(c(Names_cont,Names_cat),round(RMSE_all,2),round(SCNT_all,2)))
+ResultTAB=as.data.frame(cbind(c(Names_cont,Names_cat),round(RMSE_all,2),round(SCNT_all,7)))
 names(ResultTAB)=c("Names", "RMSE", "S_cnt")
 ResultTAB
 
+
 ######Stop running here######
+
+
+
+
+
+
 
 
 
