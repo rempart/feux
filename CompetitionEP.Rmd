@@ -346,7 +346,6 @@ perf_left
 scores<-c(scores, list(left=perf_left))
 l<-ls()
 rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
-#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
 ```
 
 We now update the probability of the CNT states with neighbors located at the right
@@ -362,10 +361,15 @@ Proba=CalculProbaDiscrete(d)
 
 Proba <-Proba %>% rename(theta_CNT=theta)
 
+
 #cleaning
+perf_right<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf_right
+scores<-c(scores, list(right=perf_right))
 l<-ls()
-rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
-#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
 ```
 
 With neighbors located North
@@ -382,9 +386,13 @@ Proba=CalculProbaDiscrete(d)
 Proba <-Proba %>% rename(theta_CNT=theta)
 
 #cleaning
+perf_north<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf_north
+scores<-c(scores, list(north=perf_north))
 l<-ls()
-rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
-#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
 ```
 
 With neighbors located South
@@ -401,9 +409,13 @@ Proba=CalculProbaDiscrete(d)
 Proba <-Proba %>% rename(theta_CNT=theta)
 
 #cleaning
+perf_south<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf_south
+scores<-c(scores, list(south=perf_south))
 l<-ls()
-rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
-#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
 ```
 
 
@@ -437,26 +449,33 @@ d$IdNumber_previous=d$IdNumber[d$IdTime+delta_previous]
 
 data_train_DF<- data_train_DF %>% left_join(d %>% dplyr::select(starts_with("IdNumber")))
 
-l<-ls()
-rm(list=l[l!="data_train_DF"])
+# l<-ls()
+# rm(list=l[l!="data_train_DF"])
 
 ```
 
 Let's build a cross table and a conditional probability
 
 ```{r}
-d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,IdNumber_next, theta_CNT) %>% 
-  arrange(IdNumber) 
-d<-d %>% mutate(theta_CNT_next=d$theta_CNT[d$IdNumber_next]) %>% filter(IdNumber !=IdNumber_next)
+d <- data_train_DF %>% left_join(Proba) %>% arrange(IdNumber) %>%
+  rename(IdNumber_A=IdNumber_next) %>% 
+  rename(theta=theta_CNT) %>% 
+  mutate(A=theta[IdNumber_A]) %>% 
+  mutate(A=ifelse(month==7,A,NA)) %>% 
+  dplyr::select(IdNumber,IdNumber_A, theta,A, starts_with("p")) 
 
-table(rep(c("theta1","theta2","theta3"), each=3),c("C",rep(c("A","B","C"),3)[-1]))->Tab
-Tab
-apply(Tab,1,sum)
-Tab/apply(Tab,1,sum)
-t(Tab/apply(Tab,1,sum))
-Tab<- table(d$theta_CNT,d$theta_CNT_next)
-Ti<-apply(Tab,1,sum) #(theta_CNT en ligne, theta_CNT_next en colonne)
-theta_next_Sachant_theta=Tab/matrix(Ti,nrow = 28,ncol=28) (se lit en colonne )
+Proba=CalculProbaDiscrete(d)
+
+Proba <-Proba %>% rename(theta_CNT=theta)
+
+#cleaning
+perf_next<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf_next
+scores<-c(scores, list(p_next_m_7=perf_next))
+l<-ls()
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
 
 ```
 
