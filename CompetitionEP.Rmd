@@ -95,12 +95,12 @@ rm(d)
 # Bayesian updating
 
 Let's call $\theta$ the unknown, $[\theta]$ its probabilitic distribution.
-Consider the data $(A,B)$. Via Bayes'rule one gets
+Consider some data $(A,B)$ taken as pieces of information. Via Bayes'rule one gets
 $$[\theta|A,B]=\frac{[\theta,A,B]}{[A,B]}=\frac{[A,B|\theta]\times [\theta]}{[A,B]}\\
 [\theta|A,B]=\frac{[A|\theta,B]\times[B|\theta]\times [\theta]}{[A,B]}$$
-Focusing on these quantities as a function of the target $\theta$, we see that:
+Focusing on these quantities as a function of the target $\theta$ only, we see that:
 $$[{\theta}|A,B] \propto [A|\theta,B]\times[B|\theta]\times [\theta]$$
-In the challenge, $\theta$ is a categorical variable refering eiter to the count class of wildfire (ranging from $1$ to $28$) in a given pixel at a certain time, or the corresponding burnt area or both. The available information $A$ stems from many various sources:
+In the challenge, $\theta$ is a categorical variable refering eiter to the count class of wildfires (ranging from $1$ to $28$) in a given pixel at a certain time, or the corresponding burnt area or both. The available information $A$ stems from many various sources:
  - the neigbours because of the spatial coherence,
  - the previous category of the pixel (or its neighbours), as well as its next state due to some expected temporal behavior.
  - the 10 meteorological variables.
@@ -165,12 +165,42 @@ Proba<-data_train_DF %>% dplyr::select(IdNumber,classe_meanCNT,theta_CNT) %>%
     
 ```
 
-The tibble *Proba* now contains a prior distribution for CNT state to start with.
+The tibble *Proba* now contains a prior distribution for CNT state to start with. We can compute its score.
+
+```{r}
+SCNT_cat=function(Obs, Pred,u_cnt=u_cnt,weights_cnt=weights_cnt) {
+  
+  # calculate the matrix with estimated exceedance probability of the severity thresholds:
+  indicatrice_cnt=Pred
+  prediction_cnt=t(apply(Pred,1, cumsum))
+  
+  for(k in 1:length(u_cnt)){
+    Ind_k=Obs
+    Ind_k[u_cnt[k]<Obs]<-0
+    Ind_k[u_cnt[k]>=Obs]<-1
+    indicatrice_cnt[,k]=Ind_k
+  }
+  
+  #Computation of Scnt
+#  weights_cnt=matrix(weights_cnt,ncol=1)
+#  Scnt=sum(((indicatrice_cnt-prediction_cnt)^2%*%weights_cnt))
+  Scnt=sum((as.matrix((indicatrice_cnt-prediction_cnt)^2)%*%matrix(weights_cnt,ncol=1)))
+  
+  return(Scnt)}
+
+
+```
+
 
 Some cleaning...
 ```{r}
+perf0<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf0
+scores<-list(prior=perf0)
 l<-ls()
-rm(list=l[!l%in% c("data_train_DF", "Proba")])
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores")])
 ```
 
 ## Looking for spatial neighbors
@@ -309,9 +339,13 @@ Proba=CalculProbaDiscrete(d)
 Proba <-Proba %>% rename(theta_CNT=theta)
 
 #cleaning
+perf_left<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf_left
+scores<-c(scores, list(left=perf_left))
 l<-ls()
-rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
-#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
 ```
 
 We now update the probability of the CNT states with neighbors located at the right
@@ -327,10 +361,15 @@ Proba=CalculProbaDiscrete(d)
 
 Proba <-Proba %>% rename(theta_CNT=theta)
 
+
 #cleaning
+perf_right<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf_right
+scores<-c(scores, list(right=perf_right))
 l<-ls()
-rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
-#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
 ```
 
 With neighbors located North
@@ -347,9 +386,13 @@ Proba=CalculProbaDiscrete(d)
 Proba <-Proba %>% rename(theta_CNT=theta)
 
 #cleaning
+perf_north<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf_north
+scores<-c(scores, list(north=perf_north))
 l<-ls()
-rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
-#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
 ```
 
 With neighbors located South
@@ -366,9 +409,13 @@ Proba=CalculProbaDiscrete(d)
 Proba <-Proba %>% rename(theta_CNT=theta)
 
 #cleaning
+perf_south<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf_south
+scores<-c(scores, list(south=perf_south))
 l<-ls()
-rm(list=l[!l%in% c("data_train_DF", "Proba","CalculProbaDiscrete")])
-#t(apply(Proba %>% dplyr::select(starts_with("p")),1,cumsum))
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
 ```
 
 
@@ -402,26 +449,33 @@ d$IdNumber_previous=d$IdNumber[d$IdTime+delta_previous]
 
 data_train_DF<- data_train_DF %>% left_join(d %>% dplyr::select(starts_with("IdNumber")))
 
-l<-ls()
-rm(list=l[l!="data_train_DF"])
+# l<-ls()
+# rm(list=l[l!="data_train_DF"])
 
 ```
 
 Let's build a cross table and a conditional probability
 
 ```{r}
-d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,IdNumber_next, theta_CNT) %>% 
-  arrange(IdNumber) 
-d<-d %>% mutate(theta_CNT_next=d$theta_CNT[d$IdNumber_next]) %>% filter(IdNumber !=IdNumber_next)
+d <- data_train_DF %>% left_join(Proba) %>% arrange(IdNumber) %>%
+  rename(IdNumber_A=IdNumber_next) %>% 
+  rename(theta=theta_CNT) %>% 
+  mutate(A=theta[IdNumber_A]) %>% 
+  mutate(A=ifelse(month==7,A,NA)) %>% 
+  dplyr::select(IdNumber,IdNumber_A, theta,A, starts_with("p")) 
 
-table(rep(c("theta1","theta2","theta3"), each=3),c("C",rep(c("A","B","C"),3)[-1]))->Tab
-Tab
-apply(Tab,1,sum)
-Tab/apply(Tab,1,sum)
-t(Tab/apply(Tab,1,sum))
-Tab<- table(d$theta_CNT,d$theta_CNT_next)
-Ti<-apply(Tab,1,sum) #(theta_CNT en ligne, theta_CNT_next en colonne)
-theta_next_Sachant_theta=Tab/matrix(Ti,nrow = 28,ncol=28) (se lit en colonne )
+Proba=CalculProbaDiscrete(d)
+
+Proba <-Proba %>% rename(theta_CNT=theta)
+
+#cleaning
+perf_next<-SCNT_cat(Obs=Proba %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
+         Pred=Proba %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")),
+         u_cnt=u_cnt,weights_cnt=weights_cnt)
+perf_next
+scores<-c(scores, list(p_next_m_7=perf_next))
+l<-ls()
+rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
 
 ```
 
