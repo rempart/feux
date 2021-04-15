@@ -81,6 +81,8 @@ dim(train_DF) # dimension of training data
 Site<-paste(train_DF$lon,train_DF$lat)
 #Month-Year id
 Time<-paste(train_DF$month, train_DF$year)
+#Site*Month
+SiteMonth<-paste(Site,train_DF$month)
 
 ####################################
 ##### Categories of CNT and weights#
@@ -88,15 +90,19 @@ Time<-paste(train_DF$month, train_DF$year)
 
 Cat_CNT=train_DF$CNT
 Weight_CNT=train_DF$CNT
-Weight_list=c(weights_cnt[1], diff(weights_cnt))
+Weight_list=weights_cnt
 
 for(k in 2:length(u_cnt)){
-  Cat_CNT[(train_DF$CNT>=u_cnt[k-1]) & (train_DF$CNT<u_cnt[k])] = u_cnt[k-1]
-  Weight_CNT[(train_DF$CNT>=u_cnt[k-1]) & (train_DF$CNT<u_cnt[k])] = Weight_list[k-1]
+  Cat_CNT[(train_DF$CNT>u_cnt[k-1]) & (train_DF$CNT<=u_cnt[k])] = u_cnt[k]
+  Weight_CNT[(train_DF$CNT>u_cnt[k-1]) & (train_DF$CNT<=u_cnt[k])] = Weight_list[k]
 }
 
-Cat_CNT[(train_DF$CNT>=100)]=100
-Weight_CNT[(train_DF$CNT>=100)]=Weight_list[length(Weight_list)]
+Cat_CNT[train_DF$CNT<=0]=u_cnt[1]
+Weight_CNT[train_DF$CNT<=0]=Weight_list[1]
+
+Cat_CNT[(train_DF$CNT>100)]=200
+Weight_CNT[(train_DF$CNT>100)]=0
+
 unique(Cat_CNT)
 table(Cat_CNT)
 
@@ -110,7 +116,7 @@ table(Cat_CNT)
 ####-> test_select_DF: train dataset for continuous predictions
 ####-> test_select_Cat_CNT: categories of CNT (categorical RF)
 ####-> test_select_weight: weights (weighted categorical RF)
-####-> test_select_site and train_select_time: for random effect model
+####-> test_select_site and test_select_time: for random effect model
 ##############################################################################
 
 set.seed(1)
@@ -127,6 +133,12 @@ test_select_site<-Site[c(SelNum)]
 #Same selection for time
 train_select_time<-Time[-c(SelNum)]
 test_select_time<-Time[c(SelNum)]
+#Same selection for site*month
+train_select_sitemonth<-SiteMonth[-c(SelNum)]
+test_select_sitemonth<-SiteMonth[c(SelNum)]
+#Same selection for year
+train_select_year<-train_DF$year[-c(SelNum)]
+test_select_year<-train_DF$year[c(SelNum)]
 
 ##################
 #####Modelling####
@@ -159,15 +171,15 @@ plot(pred_mean_cnt_lasso,test_select_DF$CNT, xlab="Predictions", ylab="observati
 abline(0,1)
 
 ####Model 3: glmer
-train_glmer<-cbind(train_select_DF, site=train_select_site, time=train_select_time)
-fit_glmer = glmer(CNT ~ 1+(1|time)+(1|site), data = train_glmer, family = poisson(link = "log"))
+train_glmer<-data.frame(CNT=train_select_DF$CNT,year=train_select_year, site=train_select_site, time=train_select_time, sitemonth=train_select_sitemonth)
+fit_glmer = glmer(CNT ~ 1+(1|site)+(1|sitemonth), data = train_glmer, family = poisson(link = "log"))
 summary(fit_glmer)
 Pred_glmer_train<-predict(fit_glmer, type="response", re.form=NULL)
 plot(train_glmer$CNT,Pred_glmer_train)
 save(fit_glmer, file="fit_glmer")
 load(file="fit_glmer")
 # calculate predictions:
-test_glmer=cbind(test_select_DF, site=test_select_site, time=test_select_time)
+test_glmer=data.frame(sitemonth=test_select_sitemonth, time=test_select_time, site=test_select_site, year=test_select_year)
 pred_mean_cnt_glmer = predict(fit_glmer, newdata=test_glmer, re.form=NULL, type = "response")
 plot(pred_mean_cnt_glmer,test_select_DF$CNT, xlab="Predictions", ylab="observations")
 abline(0,1)
@@ -208,7 +220,7 @@ abline(0,1)
 ###Model 6: ranger for categories
 train_select_DF_cat=train_select_DF
 train_select_DF_cat$CNT=as.factor(train_select_Cat_CNT)
-fit_ranger_cat=ranger(CNT~., data=train_select_DF_cat, probability = TRUE)
+fit_ranger_cat=ranger(CNT~., data=train_select_DF_cat, probability = TRUE, num.trees=1000)
 save(fit_ranger_cat, file="fit_ranger_cat")
 load(file="fit_ranger_cat")
 #Predictions
@@ -300,11 +312,11 @@ save(Proba_list,file="Proba_list")
 load("Pred_list")
 load("Proba_list")
 
+Proba_list[[1]]<-pred_cnt_ranger_cat$predictions
+#Pred_list[[5]]<-pred_mean_cnt_ranger_glmer$predictions
+
 RMSE_all=c()
 SCNT_all=c()
-
-dev.new()
-par(mfrow=c(2,3))
 
 for (m in 1:6) {
 Pred=unlist(Pred_list[m])
@@ -316,6 +328,7 @@ SCNT_all=c(SCNT_all,Res[2])
 
 for (m in 1:2) {
 Pred=Proba_list[[m]]
+Pred=Pred[,-ncol(Pred)]
 Obs=test_select_DF$CNT
 Resc=SCNT_cat(Obs, Pred,u_cnt)
 RMSE_all=c(RMSE_all, NA)
