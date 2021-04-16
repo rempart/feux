@@ -551,6 +551,29 @@ SVD=svd(LC)
 plot(1:18,SVD$d/sum(SVD$d))
 ```
 
+```{r}
+df<-data_train_DF
+df<- df %>% rename(CNTcategoriel=CNT, BAcategoriel=BA)
+df<-df %>% left_join(data_train_DF)
+
+df= df %>% mutate(CNTimoins1=ifelse(month==3, yes= NA, no= CNT[IdNumber_previous]) ) %>% 
+mutate(CNTiplus1=ifelse(month==9, yes= NA, no= CNT[IdNumber_next]) ) %>% mutate(CNTimoyen=mean(c(CNTiplus1,CNTiplus1),na.rm=T)) %>% 
+  mutate(XiL=ifelse(IdNumber==IdNumber_left,yes=NA, no= CNT[IdNumber_left])) %>% 
+  mutate(XiR=ifelse(IdNumber==IdNumber_right,yes=NA, no= CNT[IdNumber_right])) %>% 
+ mutate(XiU=ifelse(IdNumber==IdNumber_up,yes=NA, no= CNT[IdNumber_up])) %>%
+  mutate(XiD=ifelse(IdNumber==IdNumber_down,yes=NA, no= CNT[IdNumber_down])) %>% 
+  mutate(Xmoyen=mean(c(XiD,XiL,XiD,XiU),na.rm=T)) 
+
+df %>% 
+  dplyr::select(CNT,Xmoyen,CNTimoyen) %>% ggplot(aes(x=CNT,y=Xmoyen))+geom_point()
+
+library(ggmcmc)
+
+df  %>% pairs()
+
+%>% relocate("CNTimoins1",.after="CNT") %>% relocate(IdNumber_previous, .after="IdNumber") %>% 
+  
+```
 
 
 
