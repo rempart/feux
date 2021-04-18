@@ -2,7 +2,7 @@
 title: "Wildfires Competition"
 subtitle: "GO Bayes!"
 author: "Eric"
-date: "15/4/2021"
+date: "18/4/2021"
 output: html_document
 ---
 
@@ -50,7 +50,10 @@ cut_modif <- function(feux=0,u=u_ba){
   ifelse(is.na(feux),yes=feux, no= cut(feux,uprim, labels=F))
 }
 
-data_train_DF<- data_train_DF %>% mutate(tetha_BA=cut_modif(feux=BA,u=c(u_ba,1000000)),
+data_train_DF<- data_train_DF %>% 
+  mutate(BAcontinuous=BA,
+         CNTcontinuous=CNT) %>% 
+  mutate(tetha_BA=cut_modif(feux=BA,u=c(u_ba,1000000)),
                     theta_CNT=cut_modif(feux=CNT,u=c(u_cnt,1000))     ) 
 data_train_DF %>% pull(theta_CNT) %>% table()->tab
 prior_CNT= cumsum(tab/sum(tab))
@@ -249,6 +252,75 @@ d$IdNumber_previous=d$IdNumber[d$IdTime+delta_previous]
 
 data_train_DF<- data_train_DF %>% left_join(d %>% dplyr::select(starts_with("IdNumber")))
 
+
+
+```
+
+# Reprise des calculs de David
+
+```{r}
+df<-data_train_DF %>% dplyr::select(starts_with("IdNumber"), 
+                        site,lon,lat,month, year,BAcontinuous,CNTcontinuous) %>% 
+  rename(BA=BAcontinuous,CNT=CNTcontinuous)
+
+#Avec tout le fichier
+dfpourDavid1= df %>% mutate(CNTimoins1=ifelse(month==3, yes= NA, no= CNT[IdNumber_previous]) ) %>% 
+mutate(CNTiplus1=ifelse(month==9, yes= NA, no= CNT[IdNumber_next]) ) %>% mutate(CNTimoyen=rowMeans(dplyr::select(.,starts_with("CNTi")),na.rm=T)) %>% 
+  mutate(XiL=ifelse(IdNumber==IdNumber_left,yes=NA, no= CNT[IdNumber_left])) %>% 
+  mutate(XiR=ifelse(IdNumber==IdNumber_right,yes=NA, no= CNT[IdNumber_right])) %>% 
+ mutate(XiU=ifelse(IdNumber==IdNumber_up,yes=NA, no= CNT[IdNumber_up])) %>%
+  mutate(XiD=ifelse(IdNumber==IdNumber_down,yes=NA, no= CNT[IdNumber_down])) %>% 
+  mutate(Xmoyen=rowMeans(dplyr::select(.,starts_with("Xi")),na.rm=T)) 
+ 
+ dfpourDavid1 %>% 
+  dplyr::select(CNT,Xmoyen,CNTimoyen) %>%  gather(-CNT,key="Transformes", value="values") %>% ggplot(aes(x=log(1+CNT),y=log(1+values)))+geom_point()+facet_wrap(~Transformes)+geom_smooth(se=0)
+
+# Avec le fichier test
+ # remove rows with data to predict:
+train_DF = df[!is.na(df$CNT),]
+test_DF = df[is.na(df$CNT),]
+# remove BA (which contains more NA values):
+train_DF = subset(train_DF, select = -BA)
+# in test data, remove BA and the NA column of CNT:
+test_DF = subset(test_DF, select = -c(CNT, BA))
+dim(train_DF)
+dim(test_DF)
+dim(train_DF) # dimension of training data
+  
+set.seed(1)
+SelNum<-sample(1:nrow(train_DF), round(0.5*nrow(train_DF)), replace=F)
+train_select_DF<-train_DF[-c(SelNum),]
+test_select_DF<-train_DF[c(SelNum),]
+
+# Le fichier de travail pour l'apprentissage est le suivant
+dim(train_select_DF)
+train_select_IDNUMBERS= train_select_DF %>% pull(IdNumber)
+length(train_select_IDNUMBERS)
+
+# On fait le m^me boulot que précedemment mais on dit que CNT= NA si IDNumber n'est pas dans le training set
+
+df<-data_train_DF %>% dplyr::select(starts_with("IdNumber"), 
+                        site,lon,lat,month, year,BAcontinuous,CNTcontinuous) %>% 
+  mutate(CNT=ifelse(IdNumber %in% train_select_IDNUMBERS, yes= CNTcontinuous, no= NA) )%>% 
+           mutate(BA=BAcontinuous)
+
+dfpourDavid2= df %>% mutate(CNTimoins1=ifelse(month==3, yes= NA, no= CNT[IdNumber_previous]) ) %>% 
+mutate(CNTiplus1=ifelse(month==9, yes= NA, no= CNT[IdNumber_next]) ) %>% mutate(CNTimoyen=rowMeans(dplyr::select(.,starts_with("CNTi")),na.rm=T)) %>% 
+  mutate(XiL=ifelse(IdNumber==IdNumber_left,yes=NA, no= CNT[IdNumber_left])) %>% 
+  mutate(XiR=ifelse(IdNumber==IdNumber_right,yes=NA, no= CNT[IdNumber_right])) %>% 
+ mutate(XiU=ifelse(IdNumber==IdNumber_up,yes=NA, no= CNT[IdNumber_up])) %>%
+  mutate(XiD=ifelse(IdNumber==IdNumber_down,yes=NA, no= CNT[IdNumber_down])) %>% 
+  mutate(Xmoyen=rowMeans(dplyr::select(.,starts_with("Xi")),na.rm=T)) 
+
+train_select_DF=train_select_DF %>% left_join(dfpourDavid2 %>% 
+                                                filter(IdNumber %in% train_select_IDNUMBERS ) )
+
+# Le probleme c'est que tu perds en gros la moitié de ta base car il y des NaN (Not a Number) qui viennent du fait que  mean(c(NA,NA),na.rm=T)= NaN !!!
+sum(is.nan(train_select_DF$Xmoyen))+sum(is.nan(train_select_DF$CNTimoyen))
+
+# Mais il t'en reste pas mal
+train_select_DF %>% 
+  dplyr::select(CNT,Xmoyen,CNTimoyen) %>%  gather(-CNT,key="Transformes", value="values") %>% ggplot(aes(x=log(1+CNT),y=log(1+values)))+geom_point()+facet_wrap(~Transformes)+geom_smooth(se=0)
 
 
 ```
@@ -549,30 +621,6 @@ range(LC)
 var(LC)
 SVD=svd(LC)
 plot(1:18,SVD$d/sum(SVD$d))
-```
-
-```{r}
-df<-data_train_DF
-df<- df %>% rename(CNTcategoriel=CNT, BAcategoriel=BA)
-df<-df %>% left_join(data_train_DF)
-
-df= df %>% mutate(CNTimoins1=ifelse(month==3, yes= NA, no= CNT[IdNumber_previous]) ) %>% 
-mutate(CNTiplus1=ifelse(month==9, yes= NA, no= CNT[IdNumber_next]) ) %>% mutate(CNTimoyen=mean(c(CNTiplus1,CNTiplus1),na.rm=T)) %>% 
-  mutate(XiL=ifelse(IdNumber==IdNumber_left,yes=NA, no= CNT[IdNumber_left])) %>% 
-  mutate(XiR=ifelse(IdNumber==IdNumber_right,yes=NA, no= CNT[IdNumber_right])) %>% 
- mutate(XiU=ifelse(IdNumber==IdNumber_up,yes=NA, no= CNT[IdNumber_up])) %>%
-  mutate(XiD=ifelse(IdNumber==IdNumber_down,yes=NA, no= CNT[IdNumber_down])) %>% 
-  mutate(Xmoyen=mean(c(XiD,XiL,XiD,XiU),na.rm=T)) 
-
-df %>% 
-  dplyr::select(CNT,Xmoyen,CNTimoyen) %>% ggplot(aes(x=CNT,y=Xmoyen))+geom_point()
-
-library(ggmcmc)
-
-df  %>% pairs()
-
-%>% relocate("CNTimoins1",.after="CNT") %>% relocate(IdNumber_previous, .after="IdNumber") %>% 
-  
 ```
 
 
