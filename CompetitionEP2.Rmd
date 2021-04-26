@@ -446,7 +446,7 @@ rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights
 Some other prior
 ```{r}
 data_train_DF %>% pull(theta_CNT) %>% table()->tab
-prior_CNT= as.numeric(cumsum(tab/sum(tab)))
+prior_CNT= as.numeric((tab/sum(tab)))
 prior_CNT=cbind(data_frame(IdNumber=data_train_DF$IdNumber,
                            theta_CNT=data_train_DF$theta_CNT),
                 as_data_frame(matrix(prior_CNT,nrow=length(data_train_DF$IdNumber),ncol=29,byrow = T) ))
@@ -458,7 +458,7 @@ perf0bis<-SCNT_cat(Obs=prior_CNT %>% filter(!is.na(theta_CNT)) %>% pull(theta_CN
          u_cnt=u_cnt,weights_cnt=weights_cnt)
 perf0bis
 scores<-c(scores, list(SiFrequence=perf0bis))
-#Proba <-prior_CNT
+Proba <-prior_CNT #ON demarre avec ce prior
 ```
 
 
@@ -493,6 +493,7 @@ Proba<- dout %>% dplyr::select(IdNumber, theta, starts_with("p"))
 We now update the probability of the CNT states with neighbors located at the left
 
 ```{r}
+Proba=prior_CNT # on demarre avec ce prior
 d <- data_train_DF %>% left_join(Proba) %>% arrange(IdNumber) %>%
   rename(IdNumber_A=IdNumber_left) %>% 
   rename(theta=theta_CNT) %>% 
@@ -591,36 +592,24 @@ rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights
 J suggest a Normal quantile transformation : first we bin each of them to get the empirical cumulative distribution and then  transform  into a Gauss variate. A PCA is them performed to reduce dimension
 
 ```{r}
-Reduce<- function(X=rbeta(2000,1,1),K=100-1){
-  breaks = unique(quantile(X, 0:K/K))
-qnorm(as.integer(cut(X, breaks = breaks, include.lowest = TRUE))/(length(breaks)+1))}
-
-hist(Reduce())
-
-LC<- data_train_DF %>% dplyr::select(.,starts_with("lc")) %>% as.matrix()
-#LC<-log(LC+1)
-
-for(j in 1:18){
-  A=Reduce(X=LC[,j],K=9)
-  LC[,j]=A
-}
-hist(LC[,17])
-
-Fn<-ecdf(LC[,1])
-X= qnorm(Fn(LC[,1]))
-hist(X)
-
-LC<- data_train_DF %>% dplyr::select(.,starts_with("lc")) %>% as.matrix()
-#LC<-log(LC+1)
+LC<- data_train_DF %>% arrange(theta_CNT) %>% dplyr::select(.,starts_with("lc")) %>% as.matrix()
 
 for(j in 1:18){
   Fn<-ecdf(LC[,j])
 LC[,j]= qnorm(0.99*Fn(LC[,j]))
 }
-range(LC)
-var(LC)
+#range(LC)
+#var(LC)
 SVD=svd(LC)
-plot(1:18,SVD$d/sum(SVD$d))
+plot(1:18,cumsum(SVD$d/sum(SVD$d)))
+
+d<- data_train_DF %>% arrange(theta_CNT) %>% dplyr::select(theta_CNT,IdNumber) %>% cbind(LC) %>% na.omit()
+n=d %>% group_by(theta_CNT) %>% summarize(n=n()) %>% pull(n)
+dd= d %>% group_by(theta_CNT) %>% summarize(cm=colMeans(dplyr::select(.,starts_with("lc")))) 
+
+csn=cumsum(n)
+for (i in 1:29){ ListeMU = c(ListeMU, )}
+
 ```
 
 
