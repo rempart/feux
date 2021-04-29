@@ -2,7 +2,7 @@
 title: "Wildfires Competition"
 subtitle: "GO Bayes!"
 author: "Eric"
-date: "18/4/2021"
+date: "26/4/2021"
 output: html_document
 ---
 
@@ -450,8 +450,8 @@ prior_CNT= as.numeric((tab/sum(tab)))
 prior_CNT=cbind(data_frame(IdNumber=data_train_DF$IdNumber,
                            theta_CNT=data_train_DF$theta_CNT),
                 as_data_frame(matrix(prior_CNT,nrow=length(data_train_DF$IdNumber),ncol=29,byrow = T) ))
-colnames(prior_CNT)<-colnames(Proba)
-
+#colnames(prior_CNT)<-colnames(Proba)
+colnames(prior_CNT)<-c("IdNumber","theta_CNT", paste("p",1:29,sep=""))
 perf0bis<-SCNT_cat(Obs=prior_CNT %>% filter(!is.na(theta_CNT)) %>% pull(theta_CNT), 
          Pred=prior_CNT %>% filter(!is.na(theta_CNT)) %>% dplyr::select(starts_with("p")) %>% 
            dplyr::select(-p29),
@@ -605,11 +605,49 @@ plot(1:18,cumsum(SVD$d/sum(SVD$d)))
 
 d<- data_train_DF %>% arrange(theta_CNT) %>% dplyr::select(theta_CNT,IdNumber) %>% cbind(LC) %>% na.omit()
 n=d %>% group_by(theta_CNT) %>% summarize(n=n()) %>% pull(n)
-dd= d %>% group_by(theta_CNT) %>% summarize(cm=colMeans(dplyr::select(.,starts_with("lc")))) 
+LC<- d %>% dplyr::select(.,starts_with("lc")) %>% as.matrix()
+
 
 csn=cumsum(n)
-for (i in 1:29){ ListeMU = c(ListeMU, )}
+ListeMu=list(mu=colMeans(LC[1:n[1],]))
+for (i in 1:(29-1)){  debut = csn[i]+1
+                  fin= csn[i+1]
+                  ListeMu=c(ListeMu, list(mu=colMeans(LC[debut:fin,])))
+}
+ListeSigma=list(Sigma=var(LC[1:n[1],]))
+for (i in 1:(29-1)){  debut = csn[i]+1
+                  fin= csn[i+1]
+                  ListeSigma=c(ListeSigma, list(Sigma=var(LC[debut:fin,])))
+                  }
+ListeP=list(P=solve(var(LC[1:n[1],])))
+for (i in 1:(29-1)){  debut = csn[i]+1
+                  fin= csn[i+1]
+                  ListeP=c(ListeP, list(P=solve(0.001*diag(18)+var(LC[debut:fin,]))))
+                  }
+#svd(0.001*diag(18)+var(LC[debut:fin,]))$d
 
+multinorm <- function(theta, x){
+  P=ListeP[[theta]]
+  m=ListeMu[[theta]]
+  f=det(P)^0.5*exp(-0.5*(x-m)%*%P%*%(x-m))
+}
+
+ d<- d %>%left_join(prior_CNT) %>% filter(!is.na(theta_CNT)) 
+ LC<- d %>% dplyr::select(.,starts_with("lc")) %>% as.matrix()
+ M= d %>% dplyr::select(.,starts_with("p"))
+#  A=0*M
+# for (i in 1: 483983){A[i,1]=multinorm (theta=1, x=as.vector(LC[i,]))
+# if ((i %% 10000)==0) print(i) }
+ # theta= d %>% pull(theta_CNT)
+ 
+ 
+ for (i in 1: 483983){ 
+       for ( j in 1:29) { M[i,j]=multinorm(theta=j, x=LC[i,])
+                         if ((i %% 100000)==0) print(c(j,i))
+       }}
+ save(list="M",file="M.Rdata")
+
+ 
 ```
 
 

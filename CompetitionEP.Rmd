@@ -113,6 +113,7 @@ $$[{\theta}|A,B] \propto
 [A|\theta]\times[B|\theta]\times [\theta]$$
  
  
+ 
 ## Priors by class of mean numbers of fires
 
 We initialize probability distribution by grouping through classes of fires
