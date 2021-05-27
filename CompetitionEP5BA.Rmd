@@ -1,0 +1,789 @@
+---
+title: "Wildfires Competition"
+subtitle: "GO Bayes! BA"
+author: "Eric"
+date: "27/5/2021"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, comment = NA)
+#Voir pour Ranger egalement http://www.rebeccabarter.com/blog/2017-11-17-caret_tutorial/
+```
+
+# Data loading
+
+First load the data, add a column with site name, and one with a date 
+```{r librairies, cache = FALSE}
+rm(list=ls())
+source("code_chargement_donnees.R")
+```
+
+There are $3503$ sites that are measured during $7$ months during $23$ years, which makes $563983$ records.
+
+
+And group by site to explore the data
+```{r}
+d <- data_train_DF %>% group_by(site) %>% 
+  summarize(lat=mean(lat),lon=mean(lon),CNTmax=max(CNT, na.rm=T), CNTmean=mean(CNT, na.rm=T),
+            BAmax=max(BA, na.rm=T), BAmean=mean(BA, na.rm=T)) %>%
+  arrange(desc(CNTmean) ) %>%relocate(lat,lon, .after= BAmean) %>% tibble()
+head(d)
+
+d %>% ggplot(aes(y=log(1+CNTmean), x=log(1+BAmean)))+geom_point()+geom_smooth(se=0)
+#data_train_DF%>% filter(month %in% c(5,6) ) %>% ggplot(aes(y=log(1+CNT), x=log(1+BA)))+geom_point()+geom_smooth(se=0)
+```
+
+
+# Data formatting
+
+## Binning discrete variables
+
+We recode the number of fires and their damages using their categorical values given by u_ba and u_cnt. As max(u_ba) is geater than max(data_train_DF) we add one extremal category. We now consider 29 bins.
+```{r}
+#u_baprim=c(-1,u_ba)
+#cut(0,u_baprim, labels=F)
+#cut(60000,u_baprim, labels=F)
+#cut(NA,u_baprim, labels=F)
+cut_modif <- function(feux=0,u=u_ba){
+  uprim=c(-1,u)
+  ifelse(is.na(feux),yes=feux, no= cut(feux,uprim, labels=F))
+}
+
+data_train_DF<- data_train_DF %>% 
+  mutate(theta_BA=cut_modif(feux=BA,u=c(u_ba,1000000)),
+                    theta_CNT=cut_modif(feux=CNT,u=c(u_cnt,1000))     ) 
+data_train_DF %>% pull(theta_BA) %>% table()->tab
+prior_BA= (tab/sum(tab))
+cumsum(prior_BA)
+```
+
+## Spatial coherences
+
+```{r}
+decoupe= c(0.0, 0.1, 0.2 ,0.3, 0.4, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0)
+data_train_DF %>% group_by(site) %>% summarize(lon=mean(lon), lat=mean(lat) , CNT=mean(CNT, na.rm=T)) %>% pull(CNT) %>% quantile(prob=decoupe) %>% as.numeric->ubis
+d<- data_train_DF %>% group_by(site) %>% summarize(lon=mean(lon), lat=mean(lat) , CNT=mean(CNT, na.rm=T), BA=mean(BA, na.rm=T)) %>% mutate(classe_CNT= cut_modif(CNT,u=ubis) ) 
+d %>%  ggplot(aes(x=lon, y=lat))+
+  geom_tile(aes(fill=-classe_CNT), color="black")+
+  theme(legend.position="none") +
+  labs(title="Grouping means of Wildfires Counts", x="Longitude", y="Latitude")+
+  scale_fill_gradientn(colours = heat.colors(length(decoupe)))
+  
+```
+
+
+```{r}
+decoupe= c(0.0, 0.1, 0.2 ,0.3, 0.4, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0)
+d %>% pull(BA) %>% quantile(prob=decoupe) %>% as.numeric->ubis
+
+d <- d %>% mutate(classe_BA= cut_modif(BA,u=ubis) ) 
+
+d %>%  ggplot(aes(x=lon, y=lat))+
+  geom_tile(aes(fill=-classe_BA), color="black")+
+  theme(legend.position="none") +
+  labs(title="Grouping means of Wildfires Burnt Areas", x="Longitude", y="Latitude")+
+  scale_fill_gradientn(colours = heat.colors(length(decoupe)))
+  
+```
+
+Adding the classes for BA and CNT to the main file
+
+```{r}
+d<-d %>% rename(mean_CNT=CNT, mean_BA=BA,
+                classe_meanCNT=classe_CNT,
+                classe_meanBA=classe_BA)
+data_train_DF<-data_train_DF %>% left_join(d)
+rm(d)
+```
+
+## Looking for spatial neighbors
+
+We create variables nbcolat and nbcolong that say how may sites can be found with the same latitude (or with the same longitude) at a given time.
+```{r}
+d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,theta_CNT,theta_BA)
+d<-d %>% arrange(date,lon,lat)
+d %>% group_by(date,lon) %>% summarise(nbcolong=length(lat)) %>% 
+  ungroup() -> dcolong
+d %>% group_by(date,lat) %>% summarise(nbcolat=length(lon)) %>% 
+  ungroup() -> dcolat
+d<-d %>% left_join(dcolat) %>% left_join(dcolong)
+```
+
+We first arrange by date and longitude followed by latitude. There is 7 months $\times$ 23 years $\times$ 117 = 18837 blocs of different latitudes. In this setting, one goes from left to right (following increasing longitudes) and then from bottom to top (following increasing latitudes). The regular structure of the lattice allows for a quick evaluation of the closest neighbors belonging to the same longitude.
+```{r}
+d<-d %>% arrange(date,lon,lat)%>% rowid_to_column(var="IdLat") 
+nsites <- 3503
+delta_up<- delta_bottom <- rep(0,nsites)
+e=1
+repeat {
+colong=d$nbcolong[e]
+delta_bottom[e]=0
+delta_up[e+colong-1]= 0
+if(colong!=1){
+delta_bottom[(e+1):(e+colong-1)]=-1
+delta_up[(e):(e+colong-2)]= 1
+}
+e=e+colong
+if (e >=(nsites+1)){
+break
+}
+}
+d$IdNumber_down=d$IdNumber[d$IdLat+rep(delta_bottom, 161)]  
+d$IdNumber_up=d$IdNumber[d$IdLat+rep(delta_up, 161)] 
+
+# a bad computational idea is as follows
+# E <- length(d$lat)
+# right_neigbor<-rep(NA,E)
+# left_neigbor<-rep(NA,E)
+# up_neigbor<-rep(NA,E)
+# down_neigbor<-rep(NA,E)
+# for(e in 1:E) {
+#   lat<-d$lat[e]
+#   long<-d$lon[e]
+#   dat=d$date[e]
+#   e_right<-which((d$date==dat)&(d$lat==lat)&(d$long==long+0.5))
+#   e_left<-which((d$date==dat)&(d$lat==lat)&(d$long==long-0.5))
+#   e_up<-which((d$date==dat)&(d$lat==lat+0.5)&(d$long==long))
+#   e_down<-which((d$date==dat)&(d$lat==lat-0.5)&(d$long==long))
+#   
+#   right_neigbor[e]=ifelse(length(e_right)!=0,e_right,NA )
+#   left_neigbor[e]= ifelse(length(e_left)!=0,e_left,NA )
+#    up_neigbor[e]= ifelse(length(e_up)!=0,e_up,NA )
+#     down_neigbor[e]=ifelse(length(e_down)!=0,e_down,NA )
+#     
+# 
+# }
+```
+
+We can work the same way with neighbors belonging to the same latitude
+```{r}
+d<-d %>% arrange(date,lat,lon)%>% rowid_to_column(var="IdLong") 
+nsites <- 3503
+delta_left<- delta_right <- rep(0,nsites)
+e=1
+repeat {
+colat=d$nbcolat[e]
+delta_left[e]=0
+delta_right[e+colong-1]= 0
+if(colat!=1){
+delta_left[(e+1):(e+colat-1)]=-1
+delta_right[(e):(e+colat-2)]= 1
+}
+e=e+colat
+if (e >=(nsites+1)){
+break
+}
+}
+d$IdNumber_left=d$IdNumber[d$IdLong+rep(delta_left, 161)]  
+d$IdNumber_right=d$IdNumber[d$IdLong+rep(delta_right, 161)] 
+
+
+data_train_DF<- data_train_DF %>% left_join(d %>% dplyr::select(starts_with("IdNumber")))
+```
+
+One can check that the neighbors seem correctly identified...
+
+```{r}
+sixselections <-sample(data_train_DF$IdNumber,6,rep=F)
+ens=NULL
+for(s in sixselections){ens=c(ens,data_train_DF %>% filter(IdNumber==s) %>% dplyr::select(starts_with("IdNum")) %>% as.vector() ) }
+d<-data_frame(IdNumber=as.numeric(ens),coul=rep(1:6,each=5)) %>% left_join(data_train_DF %>% dplyr::select(IdNumber,lat,lon))
+data_train_DF %>%  ggplot(aes(x=lon, y=lat))+
+  geom_tile(color="black", fill="white")+geom_tile(data=d,fill=as.factor(d$coul))
+```
+
+
+```{r}
+check_neighbor <- function(id,voisin,V_id,V_voisin){
+  ifelse(abs(V_id-V_voisin) > 0.51, yes=id, no=voisin)
+}
+# voisin<-data_train_DF$IdNumber_left
+# V_voisin= data_train_DF$lon[voisin]
+# id=data_train_DF$IdNumber
+# V_id=data_train_DF$lon
+#sum(check_neighbor(id,voisin,V_id,V_voisin) != voisin)
+
+data_train_DF<- data_train_DF %>%
+  mutate(IdNumber_left=check_neighbor(IdNumber,IdNumber_left,lon,lon[IdNumber_left])) %>% 
+  mutate(IdNumber_right=check_neighbor(IdNumber,IdNumber_right,lon,lon[IdNumber_right])) %>%        
+  mutate(IdNumber_down=check_neighbor(IdNumber,IdNumber_down,lat,lat[IdNumber_down])) %>%
+  mutate(IdNumber_left=check_neighbor(IdNumber,IdNumber_up,lat,lat[IdNumber_up])) 
+  
+```
+
+## Looking for temporal neighbors
+
+```{r}
+data_train_DF %>% group_by(date,classe_meanCNT) %>% summarise(CNT=mean(CNT,na.rm=T)) %>%  ggplot(aes(x=date,y=log(CNT+1), color=as.factor(classe_meanCNT) ))+
+  geom_line()+geom_smooth(se=0)+ theme(legend.position="none") +
+  labs(title="Time evolution of Wildfires Counts", x="Date")
+
+data_train_DF %>% group_by(month,classe_meanBA) %>% summarise(CNT=mean(CNT,na.rm=T)) %>%  ggplot(aes(x=month,y=CNT, color=as.factor(classe_meanBA) ))+
+  geom_line()+ theme(legend.position="none") +
+  labs(title="Monthly evolution of mean Wildfires Counts by classes of Burnt Areas", x="Month")
+```
+
+
+```{r}
+data_train_DF %>% group_by(date,classe_meanBA) %>% summarise(BA=mean(BA,na.rm=T)) %>%  ggplot(aes(x=date,y=log(BA+1), color=as.factor(classe_meanBA) ))+
+  geom_line()+geom_smooth(se=0)+ theme(legend.position="none") +
+  labs(title="Time evolution of Wildfires Burnt areas", x="Date")
+
+data_train_DF %>% group_by(month,classe_meanCNT) %>% summarise(BA=mean(BA,na.rm=T)) %>%  ggplot(aes(x=month,y=BA, color=as.factor(classe_meanCNT) ))+
+  geom_line()+ theme(legend.position="none") +
+  labs(title="Monthly evolution of mean Wildfires Burnt Areas by classes of Fire Counts", x="Month")
+```
+
+We now try to get the previous time record at a given spatio-temporal record, as well as the next one. If it appears to be the first month in the year the spatio-temporal record is its own previous neighbour. The point is its own next time neighbour if it correspond to the last month in the year.
+
+```{r}
+d <- data_train_DF %>% dplyr::select(IdNumber,site,lat,lon,date,month,year)
+d<-d %>% arrange(lon,lat,date) %>% rowid_to_column(var="IdTime") %>% 
+  mutate(IdTime=as.integer(IdTime))
+
+delta_next <-rep(c(rep(1,each=6),0),each=80569)
+d$IdNumber_next=d$IdNumber[d$IdTime+delta_next]  
+
+delta_previous <- rep(c(0,rep(-1,each=6)),each=80569)
+d$IdNumber_previous=d$IdNumber[d$IdTime+delta_previous]  
+
+data_train_DF<- data_train_DF %>% left_join(d %>% dplyr::select(starts_with("IdNumber")))
+
+
+
+```
+
+# Test and Training Data
+
+```{r}
+ # Completer data_train_DF par qualitatives
+data_train_DF<- data_train_DF %>% mutate(theta_BA_left=theta_BA[IdNumber_left],
+                                        theta_BA_right=theta_BA[IdNumber_right],
+                                        theta_BA_up=theta_BA[IdNumber_up],
+                                        theta_BA_down=theta_BA[IdNumber_down],
+                                        theta_BA_previous=theta_BA[IdNumber_previous],
+                                        theta_BA_next=theta_BA[IdNumber_next]) 
+
+ # Completer data_train_DF par quantitativesNQT on LC
+LC<- data_train_DF %>% dplyr::select(.,starts_with("lc")) %>% as.matrix()
+for(j in 1:18){
+  Fn<-ecdf(LC[,j])
+LC[,j]= qnorm(0.99*Fn(LC[,j]))
+}
+
+ACP<-princomp(LC,cor=TRUE,scores=TRUE)
+LC=ACP$scores
+colnames(LC)=paste("lc",1:18,sep="")
+
+data_train_DF<- cbind(data_train_DF %>% dplyr::select(.,-starts_with("lc")),LC)
+ 
+# Completer data_train_DF par quantitativesNQT on LC
+CLIM<- data_train_DF %>% dplyr::select(.,starts_with("clim")) %>% as.matrix()
+for(j in 1:10){
+  Fn<-ecdf(CLIM[,j])
+CLIM[,j]= qnorm(0.99*Fn(CLIM[,j]))
+}
+
+ACP<-princomp(CLIM,cor=TRUE,scores=TRUE)
+CLIM=ACP$scores
+colnames(CLIM)=paste("clim",1:10,sep="")
+data_train_DF<- cbind(data_train_DF %>% dplyr::select(.,-starts_with("clim")),CLIM)
+ 
+
+
+ # Selection apprentissage et test
+train_BA_Id <-data_train_DF %>% filter(!is.na(BA)) %>% pull(IdNumber)
+test_BA_Id <-data_train_DF %>% filter(is.na(BA)) %>% pull(IdNumber)
+length(train_BA_Id)
+length(test_BA_Id)
+
+set.seed(1)
+testproba=0.165
+test_select_Id<-sample(train_BA_Id, round(testproba*length(train_BA_Id)), replace=F)
+train_select_Id<- data_train_DF %>% filter(IdNumber %in% train_BA_Id) %>% 
+  filter(!(IdNumber %in% test_select_Id)) %>% pull(IdNumber)
+
+length(test_select_Id)
+length(train_select_Id)
+
+tada<-data_train_DF %>% filter(IdNumber %in% train_select_Id)
+test<-data_train_DF %>% filter(IdNumber %in% test_select_Id)
+#sum(tada$IdNumber[-1] < tada$IdNumber[-length(tada$IdNumber)])
+#sum(test$IdNumber[-1] < test$IdNumber[-length(test$IdNumber)])
+#intersect(test_select_Id,train_select_Id)
+
+```
+The IdNumber column is sorted in dataframes test and tada
+
+# Frequency prior
+
+We start with a prior based on observed frequencies
+ 
+```{r}
+prior_BA = as.numeric(table(tada$theta_BA)/sum(table(tada$theta_BA)))
+```
+The following function computes the score for the competition. Mind that only the 28 components are needed!
+
+
+```{r}
+SCNT_cat=function(Obs, Pred,u_ba=u_ba,weights_ba=weights_ba) {
+  
+  # calculate the matrix with estimated exceedance probability of the severity thresholds:
+  indicatrice_ba=Pred
+  prediction_ba=t(apply(Pred,1, cumsum))
+  
+  for(k in 1:length(u_ba)){
+    Ind_k=Obs
+    Ind_k[u_ba[k]<Obs]<-0
+    Ind_k[u_ba[k]>=Obs]<-1
+    indicatrice_ba[,k]=Ind_k
+  }
+  
+  #Computation of Scnt
+#  weights_cnt=matrix(weights_cnt,ncol=1)
+#  Scnt=sum(((indicatrice_cnt-prediction_cnt)^2%*%weights_cnt))
+  Scnt=sum((as.matrix((indicatrice_ba-prediction_ba)^2)%*%matrix(weights_cnt,ncol=1)))
+  
+  return(Scnt)}
+
+SCNT_cat(Obs=test$BA, Pred=matrix(data = prior_BA[-29],nrow=nrow(test),ncol=28,byrow = T),
+u_ba=u_ba,weights_ba=weights_ba)
+score=list(prior_frequence_empirique= SCNT_cat(Obs=test$BA, Pred=matrix(data = prior_BA[-29],nrow=nrow(test),ncol=28,byrow = T),
+u_ba=u_ba,weights_ba=weights_ba))
+```
+
+
+# Random Forests
+
+Searching for zero due to CNT=0
+
+```{r}
+quiCNTequal0intest <-test %>% filter(CNT==0) %>% pull(IdNumber)
+quiCNTdiff0intest <-test %>% filter(CNT>0) %>% pull(IdNumber)
+quiCNTisNAintest <-test %>% filter(is.na(CNT)) %>% pull(IdNumber)
+quiCNTequal0intada <-tada %>% filter(CNT==0) %>% pull(IdNumber)
+```
+
+
+
+```{r}
+library(ranger)
+if(!file.exists("pred_ranger_cat_ba_bis.Rdata")){
+pred_ranger_cat_ba=ranger(theta_BA~., 
+                           data=tada %>% 
+                             filter(!(theta_BA==1)) %>% 
+                             filter(!(is.na(CNT))) %>% 
+                           dplyr::select(theta_BA,
+                                        starts_with("lc"),
+                                        starts_with("clim"),
+                                        altiMean, altiSD, lat,lon,CNT) %>% 
+                          mutate(theta_BA=as.factor(theta_BA)),
+                           probability = TRUE,
+                          num.trees=500,
+                          mtry=8)
+
+save(pred_ranger_cat_ba, file="pred_ranger_cat_ba_bis.Rdata")
+}
+load(file="pred_ranger_cat_ba_bis.Rdata")
+```
+
+We first make forecasts for BA != 0 due to CNT !=0
+
+```{r}
+#Predictions
+pred_ba_ranger_cat=predict(pred_ranger_cat_ba, data=test %>% 
+                              filter(IdNumber %in% quiCNTdiff0intest) %>% 
+                          dplyr::select(starts_with("lc"),starts_with("clim"),
+                                        altiMean, altiSD, lat,lon,CNT) )
+head(pred_ba_ranger_cat$predictions)
+apply(pred_ba_ranger_cat$predictions, 2, mean)
+
+Pranger <- cbind(rep(0,length(quiCNTdiff0intest)),pred_ba_ranger_cat$predictions)
+colnames(Pranger) <- paste("p", 1:29, sep="")
+
+testCNTdiff0 <- cbind(test%>%filter(IdNumber %in% quiCNTdiff0intest),Pranger)
+```
+
+ then for  CNT ==0 then BA ==0
+
+```{r}
+Pranger <- cbind(rep(1,length(quiCNTequal0intest)),matrix(0,nrow=length(quiCNTequal0intest), nc=28))
+colnames(Pranger) <- paste("p", 1:29, sep="")
+testCNTegal0 <- cbind(test%>%filter(IdNumber %in% quiCNTequal0intest),Pranger)
+```
+
+and finally for is.na(CNT)
+```{r}
+if(!file.exists("pred_ranger_cat_ba.Rdata")){
+pred_ranger_cat_ba=ranger(theta_BA~., 
+                           data=tada %>% 
+                             filter(!(theta_BA==1)) %>%  
+                           dplyr::select(theta_BA,
+                                        starts_with("lc"),
+                                        starts_with("clim"),
+                                        altiMean, altiSD, lat,lon) %>%                            mutate(theta_BA=as.factor(theta_BA)),
+                           probability = TRUE,
+                          num.trees=500,
+                          mtry=8)
+
+save(pred_ranger_cat_ba, file="pred_ranger_cat_ba.Rdata")
+}
+```
+
+
+```{r}
+#Predictions
+load(file="pred_ranger_cat_ba.Rdata")
+pred_ba_ranger_cat=predict(pred_ranger_cat_ba, data=test %>% 
+                              filter(IdNumber %in% quiCNTisNAintest) %>%                    dplyr::select(starts_with("lc"),starts_with("clim"),,
+                                        altiMean, altiSD, lat,lon) ) 
+head(pred_ba_ranger_cat$predictions)
+apply(pred_ba_ranger_cat$predictions, 2, mean)
+
+Pranger <- cbind(rep(prior_BA[1],length(quiCNTisNAintest)),(1-prior_BA[1])*pred_ba_ranger_cat$predictions)
+colnames(Pranger) <- paste("p", 1:29, sep="")
+
+testCNTisNA <- cbind(test%>%filter(IdNumber %in% quiCNTisNAintest),Pranger)
+```
+
+and we group everything:
+
+
+```{r}
+test<-rbind(testCNTisNA,testCNTegal0,testCNTdiff0) %>% arrange(IdNumber)
+
+SCNT_cat(Obs=test$BA, Pred=test %>% dplyr::select(starts_with("p")) %>% as.matrix() %>% # transform from data.frame to matrix
+  {.[, 1:28]},
+u_ba=u_ba,weights_ba=weights_ba)
+# Bayesian Updating
+score=c(score, list(ranger = SCNT_cat(Obs=test$BA, Pred=test %>% dplyr::select(starts_with("p")) %>% as.matrix() %>% # transform from data.frame to matrix
+  {.[, 1:28]},
+u_ba=u_ba,weights_ba=weights_ba)))
+```
+
+
+## Bayesian updating in theory
+
+
+Let's call $\theta$ the unknown, $[\theta]$ its probability distribution.
+Consider some data $(A,B)$ taken as pieces of information. Via Bayes'rule one gets
+$$[\theta|A,B]=\frac{[\theta,A,B]}{[A,B]}=\frac{[A,B|\theta]\times [\theta]}{[A,B]}\\
+[\theta|A,B]=\frac{[A|\theta,B]\times[B|\theta]\times [\theta]}{[A,B]}$$
+Focusing on these quantities as a function of the target $\theta$ only, we see that:
+$$[{\theta}|A,B] \propto [A|\theta,B]\times[B|\theta]\times [\theta]$$
+In the challenge, $\theta$ is a categorical variable refering eiter to the count class of wildfires (ranging from $1$ to $28$) in a given pixel at a certain time, or the corresponding burnt area or both. The available information $A$ stems from many various sources:
+ - the neigbours because of the spatial coherence,
+ - the previous category of the pixel (or its neighbours), as well as its next state due to some expected temporal behavior.
+ - the 10 meteorological variables.
+ - the proportions of the 18 land cover classes in the grid cell.
+ When the information $A$ and the unknown $\theta$ are both categorical as in the first two cases, $A|\theta$ is a cross-table that can be empirically computed from the raw data table.
+ When the information $A$ is continuous and the unknown $\theta$ fixed at a certain category, $A|\theta$ empirically correspond to a matrix of observations that could be modeled as a multivariate Gaussian realisation after suitable Normal Quantile Transformations.
+ 
+ Assuming $[A,B|\theta]=[A|\theta]\times [B|\theta]$ i.e. that, given $\theta$, the pieces of information $A$ and $B$ are conditionnally independent would allow for sequential updating:
+$$[{\theta}|A,B] \propto
+[A|\theta]\times[B|\theta]\times [\theta]$$
+
+
+
+  
+ We first update with information stemming from the class of mean number of fires 
+ 
+```{r}
+InfoSachantTheta=function(d=tibble(IdNumber=rep(0,11*29),
+                                       Info=rep(1:11,29),
+                                       Theta=rep(1:29 ,each=11)),
+                                   n_Info = 11,
+                                   n_Theta=29){
+  truc= tibble(IdNumber=rep(0,n_Info*n_Theta),
+               Info=rep(1:n_Info,n_Theta),
+               Theta=rep(1:n_Theta ,each=n_Info))
+  dd<- rbind(d,truc)
+  TAB= as.matrix(table(dd$Theta,dd$Info))-1
+  res=TAB/apply(TAB,1,sum)
+}
+
+
+
+MatInfoSachantTheta= InfoSachantTheta(d=tada %>% dplyr::select(IdNumber,theta_BA,classe_meanBA) %>% 
+                                        rename(Theta=theta_BA, Info=classe_meanBA),
+                                      n_Info = 11,
+                                      n_Theta=29)
+  
+BayesUpdate=function(MatInfoSachantTheta, VectInfo, MatProba){
+  AsachantT=0*MatProba
+  AsachantT=MatInfoSachantTheta[,VectInfo]
+  TsachantA=t(AsachantT)*MatProba
+  TsachantA=TsachantA/apply(TsachantA,1,sum)
+}
+
+Proba= BayesUpdate(MatInfoSachantTheta= MatInfoSachantTheta,
+            VectInfo = test$classe_meanBA, MatProba= test %>% dplyr::select(starts_with("p")))
+
+
+score= c(score, list( avecMoyBApaspris= SCNT_cat(Obs=test$BA, Pred= Proba[,1:28] ,u_ba=u_ba,weights_ba=weights_ba)
+        ))
+(score)
+
+# MoyBA n'ameliore pas ranger, on ne prend pas en compte MoyBA
+```
+
+
+ 
+## Bayesian updating in practice
+
+
+We now update the probability of the CNT states with neighbors located at the left
+
+
+```{r}
+Proba0= test %>% dplyr::select(starts_with("p"))
+MatInfoSachantTheta= InfoSachantTheta(d=tada %>% 
+                                        dplyr::select(IdNumber,IdNumber_left,
+                                                      theta_BA,theta_BA_left) %>% 
+                                        filter(IdNumber_left %in% train_BA_Id) %>% 
+                                        filter(IdNumber_left!=IdNumber) %>% 
+                                        rename(Theta=theta_BA, Info= theta_BA_left) %>% 
+                                        dplyr::select(IdNumber,Theta,Info) ,
+                                      n_Info = 29,
+                                      n_Theta=29)
+
+OK <- test %>% filter(IdNumber_left!=IdNumber) %>% 
+               filter(!is.na(theta_BA_left))
+
+Nope <- test %>% filter(!(IdNumber %in% OK$IdNumber))
+
+ProbaOK= BayesUpdate(MatInfoSachantTheta= MatInfoSachantTheta,
+            VectInfo = OK$theta_BA_left, 
+            MatProba = OK %>% 
+              dplyr::select(starts_with("p")))
+
+ProbaOK<-ProbaOK %>% mutate(IdNumber=OK$IdNumber)
+ProbaNope= Nope %>% dplyr::select(starts_with("p"),IdNumber)
+test=test %>% dplyr::select(-starts_with("p")) %>% 
+  left_join(rbind(ProbaOK,ProbaNope)) %>% arrange(IdNumber)
+Proba= test %>% dplyr::select(starts_with("p"))
+perf_left<- SCNT_cat(Obs=test$BA, Pred= Proba[,1:28] ,u_ba=u_ba,weights_ba=weights_ba)
+score<-c(score, list(leftpaspris=perf_left))
+# On ne prend pas car augmentation
+test <- cbind(test %>% dplyr::select(-starts_with("p")),
+              Proba0)
+#l<-ls()
+#rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
+```
+
+We now update the probability of the CNT states with neighbors located at the right
+
+```{r}
+Proba0= test %>% dplyr::select(starts_with("p"))
+MatInfoSachantTheta= InfoSachantTheta(d=tada %>% 
+                                        dplyr::select(IdNumber,IdNumber_right,
+                                                      theta_BA,theta_BA_right) %>% 
+                                        filter(IdNumber_right %in% train_BA_Id) %>% 
+                                        filter(IdNumber_right!=IdNumber) %>% 
+                                        rename(Theta=theta_BA, Info= theta_BA_right) %>% 
+                                        dplyr::select(IdNumber,Theta,Info) ,
+                                      n_Info = 29,
+                                      n_Theta=29)
+OK <- test %>% filter(IdNumber_right!=IdNumber) %>% 
+               filter(!is.na(theta_BA_right))
+
+Nope <- test %>% filter(!(IdNumber %in% OK$IdNumber))
+
+ProbaOK= BayesUpdate(MatInfoSachantTheta= MatInfoSachantTheta,
+            VectInfo = OK$theta_BA_right, 
+            MatProba = OK %>% 
+              dplyr::select(starts_with("p")))
+ProbaOK<-ProbaOK %>% mutate(IdNumber=OK$IdNumber)
+ProbaNope= Nope %>% dplyr::select(starts_with("p"),IdNumber)
+test=test %>% dplyr::select(-starts_with("p")) %>% 
+  left_join(rbind(ProbaOK,ProbaNope)) %>% arrange(IdNumber)
+Proba= test %>% dplyr::select(starts_with("p"))
+perf_right<- SCNT_cat(Obs=test$BA, Pred= Proba[,1:28] ,u_ba=u_ba,weights_ba=weights_ba)
+score<-c(score, list(rightpaspris=perf_right))
+
+##rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
+
+test = cbind(test %>% dplyr::select(-starts_with("p")),Proba0)
+
+```
+
+  
+With neighbors located North
+
+```{r}
+Proba0= test %>% dplyr::select(starts_with("p"))
+MatInfoSachantTheta= InfoSachantTheta(d=tada %>%
+                                        dplyr::select(IdNumber,IdNumber_up,
+                                                      theta_BA,theta_BA_up) %>%
+                                        filter(IdNumber_up %in% train_BA_Id) %>%
+                                        filter(IdNumber_up!=IdNumber) %>%
+                                        rename(Theta=theta_BA, Info= theta_BA_up) %>%
+                                        dplyr::select(IdNumber,Theta,Info) ,
+                                      n_Info = 29,
+                                      n_Theta=29)
+OK <- test %>% filter(IdNumber_up!=IdNumber) %>%
+               filter(!is.na(theta_BA_up))
+
+Nope <- test %>% filter(!(IdNumber %in% OK$IdNumber))
+
+ProbaOK= BayesUpdate(MatInfoSachantTheta= MatInfoSachantTheta,
+            VectInfo = OK$theta_BA_up,
+            MatProba = OK %>%
+              dplyr::select(starts_with("p")))
+ProbaOK<-ProbaOK %>% mutate(IdNumber=OK$IdNumber)
+ProbaNope= Nope %>% dplyr::select(starts_with("p"),IdNumber)
+test=test %>% dplyr::select(-starts_with("p")) %>%
+left_join(rbind(ProbaOK,ProbaNope)) %>% arrange(IdNumber)
+Proba= test %>% dplyr::select(starts_with("p"))
+perf_up<- SCNT_cat(Obs=test$BA, Pred= Proba[,1:28] ,u_ba=u_ba,weights_ba=weights_ba)
+score<-c(score, list(up_pas_pris=perf_up))
+
+test = cbind(test %>% dplyr::select(-starts_with("p")),Proba0)
+
+
+
+```
+
+With neighbors located South
+
+```{r}
+Proba0= test %>% dplyr::select(starts_with("p"))
+MatInfoSachantTheta= InfoSachantTheta(d=tada %>% 
+                                        dplyr::select(IdNumber,IdNumber_down,
+                                                      theta_BA,theta_BA_down) %>% 
+                                        filter(IdNumber_down %in% train_BA_Id) %>% 
+                                        filter(IdNumber_down!=IdNumber) %>% 
+                                        rename(Theta=theta_BA, Info= theta_BA_down) %>% 
+                                        dplyr::select(IdNumber,Theta,Info) ,
+                                      n_Info = 29,
+                                      n_Theta=29)
+OK <- test %>% filter(IdNumber_down!=IdNumber) %>% 
+               filter(!is.na(theta_BA_down))
+
+Nope <- test %>% filter(!(IdNumber %in% OK$IdNumber))
+
+ProbaOK= BayesUpdate(MatInfoSachantTheta= MatInfoSachantTheta,
+            VectInfo = OK$theta_BA_down, 
+            MatProba = OK %>% 
+              dplyr::select(starts_with("p")))
+ProbaOK<-ProbaOK %>% mutate(IdNumber=OK$IdNumber)
+ProbaNope= Nope %>% dplyr::select(starts_with("p"),IdNumber)
+test=test %>% dplyr::select(-starts_with("p")) %>% left_join(rbind(ProbaOK,ProbaNope))
+Proba= test %>% dplyr::select(starts_with("p"))
+perf_down<- SCNT_cat(Obs=test$BA, Pred= Proba[,1:28] ,u_ba=u_ba,weights_ba=weights_ba)
+score<-c(score, list(downpaspris=perf_down))
+
+test=cbind(test %>% dplyr::select(-starts_with("p")),Proba0)
+```
+
+With neighbours occuring before
+
+```{r}
+Proba0= test %>% dplyr::select(starts_with("p"))
+MatInfoSachantTheta= InfoSachantTheta(d=tada %>% 
+                                        dplyr::select(IdNumber,IdNumber_previous,
+                                                      theta_BA,theta_BA_previous) %>% 
+                                        filter(IdNumber_previous %in% train_BA_Id) %>% 
+                                        filter(IdNumber_previous!=IdNumber) %>% 
+                                        rename(Theta=theta_BA, Info= theta_BA_previous) %>% 
+                                        dplyr::select(IdNumber,Theta,Info) ,
+                                      n_Info = 29,
+                                      n_Theta=29)
+OK <- test %>% filter(IdNumber_previous!=IdNumber) %>% 
+               filter(IdNumber_previous %in% test$IdNumber)
+
+Nope <- test %>% filter(!(IdNumber %in% OK$IdNumber))
+
+ProbaOK= BayesUpdate(MatInfoSachantTheta= MatInfoSachantTheta,
+            VectInfo = OK$theta_BA_previous, 
+            MatProba = OK %>% 
+              dplyr::select(starts_with("p")))
+ProbaOK<-ProbaOK %>% mutate(IdNumber=OK$IdNumber)
+ProbaNope= Nope %>% dplyr::select(starts_with("p"),IdNumber)
+test=test %>% dplyr::select(-starts_with("p")) %>% left_join(rbind(ProbaOK,ProbaNope))
+Proba= test %>% dplyr::select(starts_with("p"))
+perf_previous<- SCNT_cat(Obs=test$BA, Pred= Proba[,1:28] ,u_ba=u_ba,weights_ba=weights_ba)
+score<-c(score, list(previouspaspris=perf_previous))
+(score)
+test=cbind(test %>% dplyr::select(-starts_with("p")),Proba0)
+```
+
+With neighbours occuring after
+
+```{r}
+Proba0= test %>% dplyr::select(starts_with("p"))
+MatInfoSachantTheta= InfoSachantTheta(d=tada %>% 
+                                        dplyr::select(IdNumber,IdNumber_next,
+                                                      theta_BA,theta_BA_next) %>% 
+                                        filter(IdNumber_next %in% train_BA_Id) %>% 
+                                        filter(IdNumber_next!=IdNumber) %>% 
+                                        rename(Theta=theta_BA, Info= theta_BA_next) %>% 
+                                        dplyr::select(IdNumber,Theta,Info) ,
+                                      n_Info = 29,
+                                      n_Theta=29)
+OK <- test %>% filter(IdNumber_next!=IdNumber) %>% 
+               filter(IdNumber_next %in% test$IdNumber)
+
+Nope <- test %>% filter(!(IdNumber %in% OK$IdNumber))
+
+ProbaOK= BayesUpdate(MatInfoSachantTheta= MatInfoSachantTheta,
+            VectInfo = OK$theta_BA_next, 
+            MatProba = OK %>% 
+              dplyr::select(starts_with("p")))
+ProbaOK<-ProbaOK %>% mutate(IdNumber=OK$IdNumber)
+ProbaNope= Nope %>% dplyr::select(starts_with("p"),IdNumber)
+test=test %>% dplyr::select(-starts_with("p")) %>% left_join(rbind(ProbaOK,ProbaNope))
+Proba= test %>% dplyr::select(starts_with("p"))
+perf_next<- SCNT_cat(Obs=test$BA, Pred= Proba[,1:28] ,u_ba=u_ba,weights_ba=weights_ba)
+score<-c(score, list(afterpaspris=perf_next))
+(score)
+test=cbind(test %>% dplyr::select(-starts_with("p")),Proba0)
+
+```
+
+
+# Exploiting correlations with BA
+
+```{r}
+Proba0= test %>% dplyr::select(starts_with("p"))
+MatInfoSachantTheta= InfoSachantTheta(d=tada %>% 
+                                        dplyr::select(IdNumber,IdNumber,
+                                                      theta_BA,theta_CNT,CNT) %>% 
+                                        filter(!is.na(CNT)) %>% 
+                                        rename(Theta=theta_BA, Info= theta_CNT) %>% 
+                                        dplyr::select(IdNumber,Theta,Info) ,
+                                      n_Info = 29,
+                                      n_Theta=29)
+OK <- test %>% filter(!is.na(CNT))
+
+Nope <- test %>% filter(!(IdNumber %in% OK$IdNumber))
+
+ProbaOK= BayesUpdate(MatInfoSachantTheta= MatInfoSachantTheta,
+            VectInfo = OK$theta_CNT, 
+            MatProba = OK %>% 
+              dplyr::select(starts_with("p")))
+
+ProbaOK<-ProbaOK %>% mutate(IdNumber=OK$IdNumber)
+ProbaNope= Nope %>% dplyr::select(starts_with("p"),IdNumber)
+test=test %>% dplyr::select(-starts_with("p")) %>% left_join(rbind(ProbaOK,ProbaNope))
+Proba= test %>% dplyr::select(starts_with("p"))
+perf_CNT<- SCNT_cat(Obs=test$BA, Pred= Proba[,1:28] ,u_ba=u_ba,weights_ba=weights_ba)
+score<-c(score, list(CNTpaspris=perf_CNT))
+(score)
+```
+
+
+
+# Getting on with the pb
+
+ 
+ - Read Naive Bayes pkg
+ 
+ - check that order is kept
+ 
+ - Use log_Probabilities 
+
+
