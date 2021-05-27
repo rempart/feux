@@ -2,7 +2,7 @@
 title: "Wildfires Competition"
 subtitle: "GO Bayes!"
 author: "Eric"
-date: "16/5/2021"
+date: "27/5/2021"
 output: html_document
 ---
 
@@ -373,20 +373,23 @@ quiBAequal0intada <-tada %>% filter(BA==0) %>% pull(IdNumber)
 
 ```{r}
 library(ranger)
-if(!file.exists("pred_ranger_cat_cnt.Rdata")){
+if(!file.exists("pred_ranger_cat_cnt_bis.Rdata")){
 pred_ranger_cat_cnt=ranger(theta_CNT~., 
                            data=tada %>% 
-                             filter(!(theta_CNT==1)) %>%  
+                             filter(!(theta_CNT==1)) %>% 
+                             filter(!(is.na(BA))) %>% 
                            dplyr::select(theta_CNT,
                                         starts_with("lc"),
-                                        starts_with("clim")) %>% 
+                                        starts_with("clim"),
+                                        altiMean, altiSD, lat,lon,BA) %>% 
                           mutate(theta_CNT=as.factor(theta_CNT)),
                            probability = TRUE,
-                          num.trees=500)
+                          num.trees=500,
+                          mtry=8)
 
-save(pred_ranger_cat_cnt, file="pred_ranger_cat_cnt.Rdata")
+save(pred_ranger_cat_cnt, file="pred_ranger_cat_cnt_bis.Rdata")
 }
-load(file="pred_ranger_cat_cnt.Rdata")
+load(file="pred_ranger_cat_cnt_bis.Rdata")
 ```
 
 We first make forecasts for CNT != 0 due to BA !=0
@@ -395,7 +398,8 @@ We first make forecasts for CNT != 0 due to BA !=0
 #Predictions
 pred_cnt_ranger_cat=predict(pred_ranger_cat_cnt, data=test %>% 
                               filter(IdNumber %in% quiBAdiff0intest) %>% 
-                          dplyr::select(starts_with("lc"),starts_with("clim")) )
+                          dplyr::select(starts_with("lc"),starts_with("clim"),
+                                        altiMean, altiSD, lat,lon,BA) )
 head(pred_cnt_ranger_cat$predictions)
 apply(pred_cnt_ranger_cat$predictions, 2, mean)
 
@@ -414,13 +418,31 @@ testBAegal0 <- cbind(test%>%filter(IdNumber %in% quiBAequal0intest),Pranger)
 ```
 
 and finally for is.na(BA)
+```{r}
+if(!file.exists("pred_ranger_cat_cnt.Rdata")){
+pred_ranger_cat_cnt=ranger(theta_CNT~., 
+                           data=tada %>% 
+                             filter(!(theta_CNT==1)) %>%  
+                           dplyr::select(theta_CNT,
+                                        starts_with("lc"),
+                                        starts_with("clim"),
+                                        altiMean, altiSD, lat,lon) %>%                            mutate(theta_CNT=as.factor(theta_CNT)),
+                           probability = TRUE,
+                          num.trees=500,
+                          mtry=8)
+
+save(pred_ranger_cat_cnt, file="pred_ranger_cat_cnt.Rdata")
+}
+#load(file="pred_ranger_cat_cnt.Rdata")
+```
 
 
 ```{r}
 #Predictions
+load(file="pred_ranger_cat_cnt.Rdata")
 pred_cnt_ranger_cat=predict(pred_ranger_cat_cnt, data=test %>% 
-                              filter(IdNumber %in% quiBAisNAintest) %>% 
-                          dplyr::select(starts_with("lc"),starts_with("clim")) )
+                              filter(IdNumber %in% quiBAisNAintest) %>%                    dplyr::select(starts_with("lc"),starts_with("clim"),,
+                                        altiMean, altiSD, lat,lon) ) 
 head(pred_cnt_ranger_cat$predictions)
 apply(pred_cnt_ranger_cat$predictions, 2, mean)
 
@@ -589,9 +611,12 @@ test=test %>% dplyr::select(-starts_with("p")) %>%
   left_join(rbind(ProbaOK,ProbaNope)) %>% arrange(IdNumber)
 Proba= test %>% dplyr::select(starts_with("p"))
 perf_right<- SCNT_cat(Obs=test$CNT, Pred= Proba[,1:28] ,u_cnt=u_cnt,weights_cnt=weights_cnt)
-score<-c(score, list(right=perf_right))
+score<-c(score, list(rightpaspris=perf_right))
 
 ##rm(list=l[!l%in% c("data_train_DF", "Proba","u_ba","u_cnt","weights_ba","weights_cnt","SCNT_cat","scores","CalculProbaDiscrete")])
+
+test = cbind(test %>% dplyr::select(-starts_with("p")),Proba0)
+
 ```
 
 With neighbors located North
@@ -746,7 +771,7 @@ ProbaNope= Nope %>% dplyr::select(starts_with("p"),IdNumber)
 test=test %>% dplyr::select(-starts_with("p")) %>% left_join(rbind(ProbaOK,ProbaNope))
 Proba= test %>% dplyr::select(starts_with("p"))
 perf_BA<- SCNT_cat(Obs=test$CNT, Pred= Proba[,1:28] ,u_cnt=u_cnt,weights_cnt=weights_cnt)
-score<-c(score, list(BA=perf_BA))
+score<-c(score, list(BApaspris=perf_BA))
 (score)
 ```
 
